@@ -10,6 +10,7 @@ interface RouteContext {
 const SendBody = z.object({
   content: z.string().min(1),
   mentionedAgentIds: z.array(z.string()).optional(),
+  parentMessageId: z.string().optional(),
 })
 
 export async function GET(_req: NextRequest, ctx: RouteContext) {
@@ -31,6 +32,7 @@ export async function POST(req: NextRequest, ctx: RouteContext) {
       conversationId: id,
       content: parsed.data.content,
       mentionedAgentIds: parsed.data.mentionedAgentIds,
+      parentMessageId: parsed.data.parentMessageId,
     })
     return NextResponse.json(result, { status: 202 })
   } catch (err) {

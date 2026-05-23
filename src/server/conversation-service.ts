@@ -177,6 +177,7 @@ export interface SendMessageArgs {
   conversationId: string
   content: string
   mentionedAgentIds?: string[]
+  parentMessageId?: string
 }
 
 export async function sendMessage(args: SendMessageArgs) {
@@ -198,6 +199,7 @@ export async function sendMessage(args: SendMessageArgs) {
     parts,
     status: 'complete',
     mentionedAgentIds: args.mentionedAgentIds ?? [],
+    parentMessageId: args.parentMessageId ?? null,
     createdAt: now,
   })
 

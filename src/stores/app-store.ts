@@ -37,6 +37,9 @@ interface AppState {
   // ─── 产物预览 ──────────────────────────────────────
   previewArtifactId: string | null
 
+  // ─── 引用回复目标（按 conversationId 分桶）───────
+  replyTargetByConv: Record<string, string | null>
+
   // ─── 流连接状态 ────────────────────────────────────
   streamConnected: boolean
 
@@ -58,6 +61,8 @@ interface AppState {
   closeArtifactPreview(): void
   upsertArtifact(artifact: ArtifactRow): void
   removeArtifact(artifactId: string): void
+
+  setReplyTarget(conversationId: string, messageId: string | null): void
 
   addLocalUserMessage(args: {
     tempId: string
@@ -81,6 +86,7 @@ export const useAppStore = create<AppState>()(
     dispatchesByRunId: {},
     activeConversationId: null,
     previewArtifactId: null,
+    replyTargetByConv: {},
     streamConnected: false,
 
     setStreamConnected: (connected) =>
@@ -154,6 +160,12 @@ export const useAppStore = create<AppState>()(
       set((s) => {
         delete s.artifacts[artifactId]
         if (s.previewArtifactId === artifactId) s.previewArtifactId = null
+      }),
+
+    setReplyTarget: (conversationId, messageId) =>
+      set((s) => {
+        if (messageId) s.replyTargetByConv[conversationId] = messageId
+        else delete s.replyTargetByConv[conversationId]
       }),
 
     addLocalUserMessage: ({ tempId, conversationId, content, mentionedAgentIds }) =>

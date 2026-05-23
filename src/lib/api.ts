@@ -121,6 +121,7 @@ export async function fetchMessages(conversationId: string): Promise<MessageRow[
 export interface SendMessageBody {
   content: string
   mentionedAgentIds?: string[]
+  parentMessageId?: string
 }
 
 export interface SendMessageResult {

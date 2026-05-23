@@ -5,6 +5,7 @@ import { nanoid } from 'nanoid'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentAvatar } from '@/components/agent-avatar'
+import { QuotedMessage } from '@/components/quoted-message'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
 import type { AgentRow } from '@/db/schema'
@@ -33,6 +34,11 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   const agents = useAppStore((s) => s.agents)
   const runningRuns = useTopLevelRunningRuns(conversationId)
   const isRunning = runningRuns.length > 0
+
+  // 引用回复目标
+  const replyTargetId = useAppStore((s) => s.replyTargetByConv[conversationId])
+  const replyMessage = useAppStore((s) => (replyTargetId ? s.messages[replyTargetId] : null))
+  const setReplyTarget = useAppStore((s) => s.setReplyTarget)
 
   const isGroup = conversation?.mode === 'group'
 
@@ -170,12 +176,15 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
     setContent('')
     setMentionedIds([])
     setTrigger(null)
+    const parentId = replyTargetId ?? undefined
+    if (replyTargetId) setReplyTarget(conversationId, null)
     setSending(true)
 
     try {
       const { messageId } = await sendMessageAPI(conversationId, {
         content: text,
         mentionedAgentIds: mentionedIds,
+        parentMessageId: parentId,
       })
       replaceLocalMessageId(tempId, messageId)
     } catch (err) {
@@ -197,6 +206,17 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
 
   return (
     <div className="relative shrink-0 border-t bg-background p-3">
+      {/* 引用预览 */}
+      {replyMessage && (
+        <div className="mb-2">
+          <QuotedMessage
+            message={replyMessage}
+            variant="compose"
+            onDismiss={() => setReplyTarget(conversationId, null)}
+          />
+        </div>
+      )}
+
       {/* 已确认的 mention chips */}
       {mentionedAgents.length > 0 && (
         <div className="mb-2 flex flex-wrap items-center gap-1.5">
