@@ -31,14 +31,11 @@ export function QuotedMessage({
   const summary = extractSummary(message.parts)
   const speakerName = message.role === 'user' ? '用户' : agent?.name ?? 'Unknown'
 
-  const compact = variant === 'preview'
-
   return (
     <div
       className={cn(
-        'flex items-start gap-2 rounded-md border-l-2 border-primary/40 bg-muted/40 px-2 py-1.5',
-        compact ? 'text-xs' : 'text-xs',
-        onClick && 'cursor-pointer transition hover:bg-muted/60',
+        'flex items-start gap-2 rounded-md border border-l-[3px] border-l-primary/50 bg-muted/40 px-2 py-1.5 text-xs',
+        onClick && 'cursor-pointer transition hover:bg-muted/70 hover:border-l-primary/70',
       )}
       onClick={onClick}
     >
