@@ -26,7 +26,7 @@ import { useAppStore } from '@/stores/app-store'
 type Provider = 'deepseek' | 'anthropic' | 'openai'
 
 const PROVIDER_DEFAULTS: Record<Provider, { label: string; defaultModel: string }> = {
-  deepseek: { label: 'DeepSeek', defaultModel: 'deepseek-chat' },
+  deepseek: { label: 'DeepSeek', defaultModel: 'deepseek-v4-flash' },
   anthropic: { label: 'Anthropic', defaultModel: 'claude-opus-4-7' },
   openai: { label: 'OpenAI', defaultModel: 'gpt-4o' },
 }
@@ -60,7 +60,7 @@ export function CreateAgentDialog({
   const [toolNames, setToolNames] = useState<Set<string>>(
     new Set(['write_artifact', 'read_artifact']),
   )
-  const [supportsVision, setSupportsVision] = useState(false)
+  const [supportsVision, setSupportsVision] = useState(true)
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -85,7 +85,7 @@ export function CreateAgentDialog({
       setProvider('deepseek')
       setModelId(PROVIDER_DEFAULTS.deepseek.defaultModel)
       setToolNames(new Set(['write_artifact', 'read_artifact']))
-      setSupportsVision(false)
+      setSupportsVision(true)
     }
     setError(null)
   }, [open, agent])

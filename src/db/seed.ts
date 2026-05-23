@@ -28,12 +28,13 @@ const seedAgents: AgentInsert[] = [
     id: 'ag_deepseek_coder',
     name: 'DeepSeek Coder',
     avatar: '🐳',
-    description: '通用编程助手，能写代码、出文档，并能用 write_artifact 创建可预览产物。底层 deepseek-chat。',
+    description: '通用编程助手，能写代码、出文档，并能用 write_artifact 创建可预览产物。底层 deepseek-v4-flash（多模态）。',
     capabilities: ['coding', 'general', 'writing'],
     systemPrompt: `你是 AgentHub 平台上的 DeepSeek Coder。你能：
 - 写各类代码（前端 / 后端 / 脚本）
 - 解释技术问题
 - 输出 Markdown 文档
+- 理解用户上传的图片（截图、设计稿等）并据此工作
 
 如果用户的请求适合做成"可预览的产物"，请调用 write_artifact 工具：
 - 完整的网页（HTML/CSS/JS 三件套）→ type='web_app'，content={"files":{"index.html":"...","style.css":"...","script.js":"..."},"entry":"index.html"}
@@ -43,10 +44,11 @@ const seedAgents: AgentInsert[] = [
 写网页时请保证 HTML 自包含、可直接 iframe 渲染。`,
     adapterName: 'custom',
     modelProvider: 'deepseek',
-    modelId: 'deepseek-chat',
+    modelId: 'deepseek-v4-flash',
     toolNames: ['write_artifact', 'read_artifact'],
     isBuiltin: true,
     isOrchestrator: false,
+    supportsVision: true,
     createdAt: Date.now(),
   },
   {
@@ -59,10 +61,11 @@ const seedAgents: AgentInsert[] = [
       '你是 AgentHub 平台的 Orchestrator（主协调者）。你负责把用户的复杂请求拆解为可执行的子任务，分派给群聊中合适的 Agent，并在所有任务完成后聚合结果回报给用户。',
     adapterName: 'custom',
     modelProvider: 'deepseek',
-    modelId: 'deepseek-chat',
+    modelId: 'deepseek-v4-flash',
     toolNames: ['plan_tasks'],
     isBuiltin: true,
     isOrchestrator: true,
+    supportsVision: true,
     createdAt: Date.now(),
   },
   {
@@ -82,10 +85,11 @@ PRD 必须包含：
 文风简洁有结构，使用 markdown 标题分层。除产物外，对用户的回复一段话即可。`,
     adapterName: 'custom',
     modelProvider: 'deepseek',
-    modelId: 'deepseek-chat',
+    modelId: 'deepseek-v4-flash',
     toolNames: ['write_artifact', 'read_artifact'],
     isBuiltin: true,
     isOrchestrator: false,
+    supportsVision: true,
     createdAt: Date.now(),
   },
   {
@@ -103,13 +107,14 @@ PRD 必须包含：
 4. 关键组件视觉规范（按钮、卡片、输入框）
 5. 间距 / 圆角 / 阴影 等系统化参数
 
-如有上游 PRD，先用 read_artifact 读取后再设计。`,
+如有上游 PRD，先用 read_artifact 读取后再设计。如用户上传了视觉参考图，请认真观察后再产出。`,
     adapterName: 'custom',
     modelProvider: 'deepseek',
-    modelId: 'deepseek-chat',
+    modelId: 'deepseek-v4-flash',
     toolNames: ['write_artifact', 'read_artifact'],
     isBuiltin: true,
     isOrchestrator: false,
+    supportsVision: true,
     createdAt: Date.now(),
   },
   {
@@ -125,14 +130,16 @@ PRD 必须包含：
 - 用原生 JS 或简单库；不要假设打包工具
 - 实现需求里列出的所有 P0 功能
 - 视觉上贴合上游设计师给出的风格指南
+- 如用户上传了截图 / 草图，对照实现
 
 如有上游产物（PRD / 风格指南），必须先用 read_artifact 获取详情再开始。`,
     adapterName: 'custom',
     modelProvider: 'deepseek',
-    modelId: 'deepseek-chat',
+    modelId: 'deepseek-v4-flash',
     toolNames: ['write_artifact', 'read_artifact'],
     isBuiltin: true,
     isOrchestrator: false,
+    supportsVision: true,
     createdAt: Date.now(),
   },
   {
@@ -151,10 +158,11 @@ PRD 必须包含：
 不要写代码或新的产物，只输出审查报告（文字）。`,
     adapterName: 'custom',
     modelProvider: 'deepseek',
-    modelId: 'deepseek-chat',
+    modelId: 'deepseek-v4-flash',
     toolNames: ['read_artifact'],
     isBuiltin: true,
     isOrchestrator: false,
+    supportsVision: true,
     createdAt: Date.now(),
   },
 ]
