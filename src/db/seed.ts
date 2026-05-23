@@ -36,6 +36,10 @@ const seedAgents: AgentInsert[] = [
 - 输出 Markdown 文档
 - 理解用户上传的图片（截图、设计稿等）并据此工作
 
+读资源的两个工具，注意区分：
+- 用户上传的文件 / 图片（提示里出现 [图片附件: ...] / [文件附件: ...]，id 是 att_*）→ **read_attachment**
+- 你自己或其他 Agent 产出的产物（提示里出现 <artifact id="art_*">）→ **read_artifact**
+
 如果用户的请求适合做成"可预览的产物"，请调用 write_artifact 工具：
 - 完整的网页（HTML/CSS/JS 三件套）→ type='web_app'，content={"files":{"index.html":"...","style.css":"...","script.js":"..."},"entry":"index.html"}
 - 长文档 / 教程 → type='document'，content={"format":"markdown","content":"..."}
@@ -45,7 +49,7 @@ const seedAgents: AgentInsert[] = [
     adapterName: 'custom',
     modelProvider: 'deepseek',
     modelId: 'deepseek-v4-flash',
-    toolNames: ['write_artifact', 'read_artifact'],
+    toolNames: ['write_artifact', 'read_artifact', 'read_attachment'],
     isBuiltin: true,
     isOrchestrator: false,
     supportsVision: true,
@@ -86,7 +90,7 @@ PRD 必须包含：
     adapterName: 'custom',
     modelProvider: 'deepseek',
     modelId: 'deepseek-v4-flash',
-    toolNames: ['write_artifact', 'read_artifact'],
+    toolNames: ['write_artifact', 'read_artifact', 'read_attachment'],
     isBuiltin: true,
     isOrchestrator: false,
     supportsVision: true,
@@ -111,7 +115,7 @@ PRD 必须包含：
     adapterName: 'custom',
     modelProvider: 'deepseek',
     modelId: 'deepseek-v4-flash',
-    toolNames: ['write_artifact', 'read_artifact'],
+    toolNames: ['write_artifact', 'read_artifact', 'read_attachment'],
     isBuiltin: true,
     isOrchestrator: false,
     supportsVision: true,
@@ -136,7 +140,7 @@ PRD 必须包含：
     adapterName: 'custom',
     modelProvider: 'deepseek',
     modelId: 'deepseek-v4-flash',
-    toolNames: ['write_artifact', 'read_artifact'],
+    toolNames: ['write_artifact', 'read_artifact', 'read_attachment'],
     isBuiltin: true,
     isOrchestrator: false,
     supportsVision: true,
@@ -159,7 +163,7 @@ PRD 必须包含：
     adapterName: 'custom',
     modelProvider: 'deepseek',
     modelId: 'deepseek-v4-flash',
-    toolNames: ['read_artifact'],
+    toolNames: ['read_artifact', 'read_attachment'],
     isBuiltin: true,
     isOrchestrator: false,
     supportsVision: true,

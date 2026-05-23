@@ -1,5 +1,6 @@
 import { planTasksTool } from './plan-tasks'
 import { readArtifactTool } from './read-artifact'
+import { readAttachmentTool } from './read-attachment'
 import type { ToolContext, ToolDef, ToolResult } from './types'
 import { writeArtifactTool } from './write-artifact'
 
@@ -58,6 +59,7 @@ function buildRegistry(): ToolRegistry {
   const reg = new ToolRegistry()
   reg.register(writeArtifactTool)
   reg.register(readArtifactTool)
+  reg.register(readAttachmentTool)
   reg.register(planTasksTool)
   return reg
 }

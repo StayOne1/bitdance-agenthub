@@ -31,7 +31,7 @@ const PROVIDER_DEFAULTS: Record<Provider, { label: string; defaultModel: string 
   openai: { label: 'OpenAI', defaultModel: 'gpt-4o' },
 }
 
-const AVAILABLE_TOOLS = ['write_artifact', 'read_artifact'] as const
+const AVAILABLE_TOOLS = ['write_artifact', 'read_artifact', 'read_attachment'] as const
 
 /**
  * 创建 / 编辑 Agent 的对话框。
@@ -58,7 +58,7 @@ export function CreateAgentDialog({
   const [provider, setProvider] = useState<Provider>('deepseek')
   const [modelId, setModelId] = useState(PROVIDER_DEFAULTS.deepseek.defaultModel)
   const [toolNames, setToolNames] = useState<Set<string>>(
-    new Set(['write_artifact', 'read_artifact']),
+    new Set(['write_artifact', 'read_artifact', 'read_attachment']),
   )
   const [supportsVision, setSupportsVision] = useState(true)
   const [submitting, setSubmitting] = useState(false)
@@ -84,7 +84,7 @@ export function CreateAgentDialog({
       setSystemPrompt('')
       setProvider('deepseek')
       setModelId(PROVIDER_DEFAULTS.deepseek.defaultModel)
-      setToolNames(new Set(['write_artifact', 'read_artifact']))
+      setToolNames(new Set(['write_artifact', 'read_artifact', 'read_attachment']))
       setSupportsVision(true)
     }
     setError(null)
