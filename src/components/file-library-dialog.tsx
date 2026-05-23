@@ -1,6 +1,6 @@
 'use client'
 
-import { File as FileIcon, FileText, Image as ImageIcon, Loader2, Trash2, Upload } from 'lucide-react'
+import { Check, File as FileIcon, FileText, Image as ImageIcon, Loader2, Paperclip, Trash2, Upload } from 'lucide-react'
 import { useEffect, useRef, useState } from 'react'
 
 import { formatSize } from '@/components/attachment-chip'
@@ -22,6 +22,7 @@ import {
   uploadAttachment as uploadAttachmentAPI,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import { useAppStore, usePendingAttachments } from '@/stores/app-store'
 
 /**
  * FileLibraryDialog — 单会话文件库视图。
@@ -45,6 +46,16 @@ export function FileLibraryDialog({
   const [deleteTargetId, setDeleteTargetId] = useState<string | null>(null)
   const [deleting, setDeleting] = useState(false)
   const fileInputRef = useRef<HTMLInputElement>(null)
+
+  const pending = usePendingAttachments(conversationId)
+  const pendingIds = new Set(pending.map((a) => a.id))
+  const addPendingAttachment = useAppStore((s) => s.addPendingAttachment)
+  const removePendingAttachment = useAppStore((s) => s.removePendingAttachment)
+
+  const toggleAttach = (a: AttachmentRow) => {
+    if (pendingIds.has(a.id)) removePendingAttachment(conversationId, a.id)
+    else addPendingAttachment(conversationId, a)
+  }
 
   useEffect(() => {
     if (!open) return
@@ -139,6 +150,8 @@ export function FileLibraryDialog({
                       <ImageGridItem
                         key={a.id}
                         attachment={a}
+                        attached={pendingIds.has(a.id)}
+                        onToggleAttach={() => toggleAttach(a)}
                         onDelete={() => setDeleteTargetId(a.id)}
                       />
                     ))}
@@ -160,6 +173,8 @@ export function FileLibraryDialog({
                       <FileRow
                         key={a.id}
                         attachment={a}
+                        attached={pendingIds.has(a.id)}
+                        onToggleAttach={() => toggleAttach(a)}
                         onDelete={() => setDeleteTargetId(a.id)}
                       />
                     ))}
@@ -238,13 +253,22 @@ function SkeletonGrid() {
 
 function ImageGridItem({
   attachment,
+  attached,
+  onToggleAttach,
   onDelete,
 }: {
   attachment: AttachmentRow
+  attached: boolean
+  onToggleAttach: () => void
   onDelete: () => void
 }) {
   return (
-    <div className="group relative aspect-square overflow-hidden rounded-md border bg-muted">
+    <div
+      className={cn(
+        'group relative aspect-square overflow-hidden rounded-md border bg-muted',
+        attached && 'ring-2 ring-primary',
+      )}
+    >
       <a
         href={attachmentDownloadUrl(attachment.id)}
         target="_blank"
@@ -262,30 +286,55 @@ function ImageGridItem({
       <div className="absolute inset-x-0 bottom-0 truncate bg-gradient-to-t from-black/70 to-transparent px-1.5 py-1 text-[10px] text-white opacity-0 transition group-hover:opacity-100">
         {attachment.fileName}
       </div>
-      <button
-        type="button"
-        onClick={(e) => {
-          e.preventDefault()
-          onDelete()
-        }}
-        className="absolute right-1 top-1 rounded-full bg-black/60 p-1 text-white opacity-0 transition group-hover:opacity-100 hover:bg-red-600"
-        title="删除"
-      >
-        <Trash2 className="size-3" />
-      </button>
+      <div className="absolute right-1 top-1 flex gap-1 opacity-0 transition group-hover:opacity-100">
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            onToggleAttach()
+          }}
+          className={cn(
+            'rounded-full p-1 text-white transition',
+            attached ? 'bg-primary' : 'bg-black/60 hover:bg-primary',
+          )}
+          title={attached ? '已附加（再次点击移除）' : '附加到当前消息'}
+        >
+          {attached ? <Check className="size-3" /> : <Paperclip className="size-3" />}
+        </button>
+        <button
+          type="button"
+          onClick={(e) => {
+            e.preventDefault()
+            onDelete()
+          }}
+          className="rounded-full bg-black/60 p-1 text-white transition hover:bg-red-600"
+          title="删除"
+        >
+          <Trash2 className="size-3" />
+        </button>
+      </div>
     </div>
   )
 }
 
 function FileRow({
   attachment,
+  attached,
+  onToggleAttach,
   onDelete,
 }: {
   attachment: AttachmentRow
+  attached: boolean
+  onToggleAttach: () => void
   onDelete: () => void
 }) {
   return (
-    <div className={cn('group flex items-center gap-2 rounded-md border bg-card px-3 py-2 transition hover:border-foreground/20')}>
+    <div
+      className={cn(
+        'group flex items-center gap-2 rounded-md border bg-card px-3 py-2 transition hover:border-foreground/20',
+        attached && 'border-primary/40 bg-primary/5',
+      )}
+    >
       <FileIconFor mime={attachment.mimeType} />
       <a
         href={attachmentDownloadUrl(attachment.id)}
@@ -300,6 +349,19 @@ function FileRow({
           {formatSize(attachment.size)} · {attachment.mimeType}
         </div>
       </a>
+      <button
+        type="button"
+        onClick={onToggleAttach}
+        className={cn(
+          'shrink-0 rounded p-1 transition',
+          attached
+            ? 'bg-primary text-primary-foreground'
+            : 'text-muted-foreground opacity-0 hover:text-foreground group-hover:opacity-100',
+        )}
+        title={attached ? '已附加（再次点击移除）' : '附加到当前消息'}
+      >
+        {attached ? <Check className="size-3.5" /> : <Paperclip className="size-3.5" />}
+      </button>
       <button
         type="button"
         onClick={onDelete}

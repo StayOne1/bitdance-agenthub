@@ -16,7 +16,7 @@ import {
   uploadAttachment as uploadAttachmentAPI,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
-import { useAppStore, useTopLevelRunningRuns } from '@/stores/app-store'
+import { useAppStore, usePendingAttachments, useTopLevelRunningRuns } from '@/stores/app-store'
 
 interface MentionTrigger {
   start: number // textarea 中 @ 字符的 index
@@ -30,7 +30,6 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   const [highlight, setHighlight] = useState(0)
   const [sending, setSending] = useState(false)
   const [aborting, setAborting] = useState(false)
-  const [pending, setPending] = useState<AttachmentRow[]>([])
   const [uploading, setUploading] = useState<Array<{ tempId: string; name: string }>>([])
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
@@ -42,6 +41,10 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   const agents = useAppStore((s) => s.agents)
   const runningRuns = useTopLevelRunningRuns(conversationId)
   const isRunning = runningRuns.length > 0
+  const pending = usePendingAttachments(conversationId)
+  const addPendingAttachment = useAppStore((s) => s.addPendingAttachment)
+  const removePendingAttachment = useAppStore((s) => s.removePendingAttachment)
+  const clearPendingAttachments = useAppStore((s) => s.clearPendingAttachments)
 
   // 引用回复目标
   const replyTargetId = useAppStore((s) => s.replyTargetByConv[conversationId])
@@ -72,12 +75,11 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
     setHighlight(0)
   }, [trigger?.query, filtered.length])
 
-  // 切换会话清空 state
+  // 切换会话清空 state（pending 由 store 自己分桶，不需要在这里清）
   useEffect(() => {
     setContent('')
     setMentionedIds([])
     setTrigger(null)
-    setPending([])
     setUploading([])
   }, [conversationId])
 
@@ -142,13 +144,12 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   }
 
   const removePending = (id: string) => {
-    setPending((prev) => prev.filter((a) => a.id !== id))
+    removePendingAttachment(conversationId, id)
   }
 
   const handleFileSelect = async (files: FileList | null) => {
     if (!files || files.length === 0) return
     const list = Array.from(files)
-    // 创建上传中占位
     const placeholders = list.map((f) => ({ tempId: nanoid(), name: f.name }))
     setUploading((prev) => [...prev, ...placeholders])
 
@@ -157,7 +158,7 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
         const tempId = placeholders[i].tempId
         try {
           const att = await uploadAttachmentAPI(conversationId, file)
-          setPending((prev) => [...prev, att])
+          addPendingAttachment(conversationId, att)
         } catch (err) {
           console.error('[MessageInput] upload failed', err)
         } finally {
@@ -218,7 +219,7 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
     setMentionedIds([])
     setTrigger(null)
     const attachmentIds = pending.map((a) => a.id)
-    setPending([])
+    clearPendingAttachments(conversationId)
     if (replyTargetId) setReplyTarget(conversationId, null)
     setSending(true)
 

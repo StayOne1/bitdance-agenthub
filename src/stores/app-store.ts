@@ -40,6 +40,9 @@ interface AppState {
   // ─── 引用回复目标（按 conversationId 分桶）───────
   replyTargetByConv: Record<string, string | null>
 
+  // ─── 待发送的附件（按 conversationId 分桶）。文件库和 MessageInput 共享。
+  pendingAttachmentsByConv: Record<string, AttachmentRow[]>
+
   // ─── 流连接状态 ────────────────────────────────────
   streamConnected: boolean
 
@@ -63,6 +66,10 @@ interface AppState {
   removeArtifact(artifactId: string): void
 
   setReplyTarget(conversationId: string, messageId: string | null): void
+
+  addPendingAttachment(conversationId: string, attachment: AttachmentRow): void
+  removePendingAttachment(conversationId: string, attachmentId: string): void
+  clearPendingAttachments(conversationId: string): void
 
   /** 高亮指定消息 1.5 秒（点击「引用」预览时的跳转反馈） */
   highlightedMessageId: string | null
@@ -93,6 +100,7 @@ export const useAppStore = create<AppState>()(
     activeConversationId: null,
     previewArtifactId: null,
     replyTargetByConv: {},
+    pendingAttachmentsByConv: {},
     highlightedMessageId: null,
     streamConnected: false,
 
@@ -173,6 +181,27 @@ export const useAppStore = create<AppState>()(
       set((s) => {
         if (messageId) s.replyTargetByConv[conversationId] = messageId
         else delete s.replyTargetByConv[conversationId]
+      }),
+
+    addPendingAttachment: (conversationId, attachment) =>
+      set((s) => {
+        const list = s.pendingAttachmentsByConv[conversationId] ?? []
+        if (list.some((a) => a.id === attachment.id)) return
+        s.pendingAttachmentsByConv[conversationId] = [...list, attachment]
+      }),
+
+    removePendingAttachment: (conversationId, attachmentId) =>
+      set((s) => {
+        const list = s.pendingAttachmentsByConv[conversationId]
+        if (!list) return
+        const next = list.filter((a) => a.id !== attachmentId)
+        if (next.length === 0) delete s.pendingAttachmentsByConv[conversationId]
+        else s.pendingAttachmentsByConv[conversationId] = next
+      }),
+
+    clearPendingAttachments: (conversationId) =>
+      set((s) => {
+        delete s.pendingAttachmentsByConv[conversationId]
       }),
 
     highlightMessage: (messageId) => {
@@ -436,6 +465,9 @@ export const useConversationList = () =>
   )
 
 export const useAgentList = () => useAppStore(useShallow((s) => Object.values(s.agents)))
+
+export const usePendingAttachments = (conversationId: string) =>
+  useAppStore(useShallow((s) => s.pendingAttachmentsByConv[conversationId] ?? []))
 
 /** 当前会话中正在跑的顶层 run（parentRunId 为空的，用于「中止」按钮）。 */
 export const useTopLevelRunningRuns = (conversationId: string) =>
