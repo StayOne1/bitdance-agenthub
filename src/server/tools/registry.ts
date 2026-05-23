@@ -51,10 +51,6 @@ class ToolRegistry {
   }
 }
 
-const globalForTools = globalThis as unknown as {
-  __agenthubToolRegistry?: ToolRegistry
-}
-
 function buildRegistry(): ToolRegistry {
   const reg = new ToolRegistry()
   reg.register(writeArtifactTool)
@@ -64,10 +60,8 @@ function buildRegistry(): ToolRegistry {
   return reg
 }
 
-export const toolRegistry = globalForTools.__agenthubToolRegistry ?? buildRegistry()
-
-if (!globalForTools.__agenthubToolRegistry) {
-  globalForTools.__agenthubToolRegistry = toolRegistry
-}
+// 工具集是静态的（不持有连接 / 状态），不需要跨 HMR 保活。
+// 每次模块加载重建一次即可，添加新工具后 dev 模式自动生效，不必重启。
+export const toolRegistry = buildRegistry()
 
 export type { ToolContext, ToolDef, ToolResult } from './types'

@@ -28,10 +28,6 @@ class AgentRegistry {
   }
 }
 
-const globalForRegistry = globalThis as unknown as {
-  __agenthubRegistry?: AgentRegistry
-}
-
 function buildRegistry(): AgentRegistry {
   const reg = new AgentRegistry()
   reg.register(new MockAdapter())
@@ -40,8 +36,6 @@ function buildRegistry(): AgentRegistry {
   return reg
 }
 
-export const agentRegistry = globalForRegistry.__agenthubRegistry ?? buildRegistry()
-
-if (!globalForRegistry.__agenthubRegistry) {
-  globalForRegistry.__agenthubRegistry = agentRegistry
-}
+// adapter 都是无状态翻译器（SDK client 实例化 cheap），不必跨 HMR 保活。
+// 每次模块加载重建，dev 添加新 adapter 自动生效。
+export const agentRegistry = buildRegistry()
