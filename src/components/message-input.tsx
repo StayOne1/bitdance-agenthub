@@ -1,35 +1,182 @@
 'use client'
 
-import { Send, Square } from 'lucide-react'
+import { Send, Square, X } from 'lucide-react'
 import { nanoid } from 'nanoid'
-import { useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 
+import { AgentAvatar } from '@/components/agent-avatar'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
+import type { AgentRow } from '@/db/schema'
 import { abortRun, sendMessage as sendMessageAPI } from '@/lib/api'
+import { cn } from '@/lib/utils'
 import { useAppStore, useTopLevelRunningRuns } from '@/stores/app-store'
+
+interface MentionTrigger {
+  start: number // textarea 中 @ 字符的 index
+  query: string // @ 之后到光标之间的字符
+}
 
 export function MessageInput({ conversationId }: { conversationId: string }) {
   const [content, setContent] = useState('')
+  const [mentionedIds, setMentionedIds] = useState<string[]>([])
+  const [trigger, setTrigger] = useState<MentionTrigger | null>(null)
+  const [highlight, setHighlight] = useState(0)
   const [sending, setSending] = useState(false)
   const [aborting, setAborting] = useState(false)
 
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
+
   const addLocalUserMessage = useAppStore((s) => s.addLocalUserMessage)
   const replaceLocalMessageId = useAppStore((s) => s.replaceLocalMessageId)
+  const conversation = useAppStore((s) => s.conversations[conversationId])
+  const agents = useAppStore((s) => s.agents)
   const runningRuns = useTopLevelRunningRuns(conversationId)
   const isRunning = runningRuns.length > 0
+
+  const isGroup = conversation?.mode === 'group'
+
+  // 可被 @ 的 agent：群聊里非 Orchestrator 的成员
+  const candidates = useMemo<AgentRow[]>(() => {
+    if (!conversation) return []
+    return conversation.agentIds
+      .map((id) => agents[id])
+      .filter((a): a is AgentRow => Boolean(a) && !a.isOrchestrator)
+  }, [conversation, agents])
+
+  // 过滤候选
+  const filtered = useMemo(() => {
+    if (!trigger) return []
+    const q = trigger.query.toLowerCase()
+    if (!q) return candidates
+    return candidates.filter((a) => a.name.toLowerCase().includes(q))
+  }, [trigger, candidates])
+
+  // 候选变化时重置高亮项
+  useEffect(() => {
+    setHighlight(0)
+  }, [trigger?.query, filtered.length])
+
+  // 切换会话清空 state
+  useEffect(() => {
+    setContent('')
+    setMentionedIds([])
+    setTrigger(null)
+  }, [conversationId])
+
+  const mentionedAgents = mentionedIds.map((id) => agents[id]).filter(Boolean)
+
+  // —— 触发检测：从光标往前找 @，遇 whitespace 则放弃；@ 前必须是 word boundary
+  const updateTrigger = (text: string, cursor: number) => {
+    if (!isGroup) return setTrigger(null)
+    let i = cursor - 1
+    while (i >= 0) {
+      const c = text[i]
+      if (c === '@') {
+        const before = i === 0 ? ' ' : text[i - 1]
+        if (/\s/.test(before)) {
+          setTrigger({ start: i, query: text.slice(i + 1, cursor) })
+          return
+        }
+        setTrigger(null)
+        return
+      }
+      if (/\s/.test(c)) {
+        setTrigger(null)
+        return
+      }
+      i--
+    }
+    setTrigger(null)
+  }
+
+  const handleChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
+    const value = e.target.value
+    setContent(value)
+    updateTrigger(value, e.target.selectionStart)
+  }
+
+  // 光标移动（鼠标点击 / 方向键）也要重新判断
+  const handleSelect = () => {
+    const cursor = textareaRef.current?.selectionStart ?? 0
+    updateTrigger(content, cursor)
+  }
+
+  const fillMention = (agent: AgentRow) => {
+    if (!trigger || !textareaRef.current) return
+    const cursor = textareaRef.current.selectionStart ?? content.length
+    const insertText = `@${agent.name} `
+    const newContent =
+      content.slice(0, trigger.start) + insertText + content.slice(cursor)
+    setContent(newContent)
+    setMentionedIds((prev) => (prev.includes(agent.id) ? prev : [...prev, agent.id]))
+    setTrigger(null)
+
+    // 把光标移到插入的尾部
+    requestAnimationFrame(() => {
+      const newPos = trigger.start + insertText.length
+      textareaRef.current?.setSelectionRange(newPos, newPos)
+      textareaRef.current?.focus()
+    })
+  }
+
+  const removeMention = (id: string) => {
+    setMentionedIds((prev) => prev.filter((x) => x !== id))
+  }
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    // 在 popup 打开时，方向键/Enter/Esc 走 popup
+    if (trigger && filtered.length > 0) {
+      if (e.key === 'ArrowDown') {
+        e.preventDefault()
+        setHighlight((i) => (i + 1) % filtered.length)
+        return
+      }
+      if (e.key === 'ArrowUp') {
+        e.preventDefault()
+        setHighlight((i) => (i - 1 + filtered.length) % filtered.length)
+        return
+      }
+      if (e.key === 'Enter' || e.key === 'Tab') {
+        e.preventDefault()
+        fillMention(filtered[highlight])
+        return
+      }
+      if (e.key === 'Escape') {
+        e.preventDefault()
+        setTrigger(null)
+        return
+      }
+    }
+
+    // 默认 Enter 提交
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault()
+      void submit()
+    }
+  }
 
   const submit = async () => {
     const text = content.trim()
     if (!text || sending || isRunning) return
 
     const tempId = `temp_${nanoid()}`
-    addLocalUserMessage({ tempId, conversationId, content: text, mentionedAgentIds: [] })
+    addLocalUserMessage({
+      tempId,
+      conversationId,
+      content: text,
+      mentionedAgentIds: mentionedIds,
+    })
     setContent('')
+    setMentionedIds([])
+    setTrigger(null)
     setSending(true)
 
     try {
-      const { messageId } = await sendMessageAPI(conversationId, { content: text })
+      const { messageId } = await sendMessageAPI(conversationId, {
+        content: text,
+        mentionedAgentIds: mentionedIds,
+      })
       replaceLocalMessageId(tempId, messageId)
     } catch (err) {
       console.error('[MessageInput] send failed', err)
@@ -49,18 +196,76 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   }
 
   return (
-    <div className="shrink-0 border-t bg-background p-3">
+    <div className="relative shrink-0 border-t bg-background p-3">
+      {/* 已确认的 mention chips */}
+      {mentionedAgents.length > 0 && (
+        <div className="mb-2 flex flex-wrap items-center gap-1.5">
+          <span className="text-[10px] text-muted-foreground">@ 指定</span>
+          {mentionedAgents.map((a) => (
+            <span
+              key={a.id}
+              className="inline-flex items-center gap-1 rounded-full bg-primary/10 py-0.5 pl-1 pr-1.5 text-xs text-primary"
+            >
+              <AgentAvatar agent={a} size="xs" />
+              <span>{a.name}</span>
+              <button
+                type="button"
+                onClick={() => removeMention(a.id)}
+                className="rounded-full p-0.5 hover:bg-primary/20"
+                title="移除"
+              >
+                <X className="size-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+
+      {/* @ Mention popup */}
+      {trigger && filtered.length > 0 && (
+        <div className="absolute bottom-full left-3 right-3 mb-2 max-h-60 overflow-y-auto rounded-md border bg-popover p-1 shadow-md">
+          <div className="px-2 py-1 text-[10px] text-muted-foreground">
+            选择 Agent · ↑↓ 切换 · Enter 确认 · Esc 取消
+          </div>
+          {filtered.map((a, i) => (
+            <button
+              key={a.id}
+              type="button"
+              onMouseDown={(e) => {
+                // 阻止 textarea 失焦，否则 selectionStart 拿不到正确位置
+                e.preventDefault()
+                fillMention(a)
+              }}
+              onMouseEnter={() => setHighlight(i)}
+              className={cn(
+                'flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left transition',
+                i === highlight && 'bg-accent',
+              )}
+            >
+              <AgentAvatar agent={a} size="xs" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-xs font-medium">{a.name}</div>
+                <div className="truncate text-[10px] text-muted-foreground">{a.description}</div>
+              </div>
+            </button>
+          ))}
+        </div>
+      )}
+
       <div className="flex items-end gap-2">
         <Textarea
+          ref={textareaRef}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
-          onKeyDown={(e) => {
-            if (e.key === 'Enter' && !e.shiftKey) {
-              e.preventDefault()
-              void submit()
-            }
-          }}
-          placeholder={isRunning ? '当前有 Agent 正在响应…' : '输入消息，Enter 发送，Shift+Enter 换行'}
+          onChange={handleChange}
+          onSelect={handleSelect}
+          onKeyDown={handleKeyDown}
+          placeholder={
+            isRunning
+              ? '当前有 Agent 正在响应…'
+              : isGroup
+                ? '输入消息，@ 指定 Agent，Enter 发送，Shift+Enter 换行'
+                : '输入消息，Enter 发送，Shift+Enter 换行'
+          }
           className="min-h-[44px] max-h-40 resize-none"
           disabled={isRunning}
         />
