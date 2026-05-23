@@ -7,6 +7,7 @@ import { AgentLibrary } from '@/components/agent-library'
 import { AgentAvatar } from '@/components/agent-avatar'
 import { ArtifactLibrary } from '@/components/artifact-library'
 import { NewConversationDialog } from '@/components/new-conversation-dialog'
+import { ThemeToggle } from '@/components/theme-toggle'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -71,7 +72,7 @@ export function Sidebar() {
       <div
         className={cn(
           'flex shrink-0 items-center border-b',
-          collapsed ? 'justify-center px-1 py-3' : 'justify-between px-4 py-3',
+          collapsed ? 'flex-col gap-1 px-1 py-2' : 'justify-between px-4 py-3',
         )}
       >
         {!collapsed && (
@@ -80,15 +81,18 @@ export function Sidebar() {
             <p className="truncate text-xs text-muted-foreground">多 Agent 协作平台</p>
           </div>
         )}
-        <Button
-          size="icon"
-          variant="ghost"
-          onClick={() => setCollapsed((v) => !v)}
-          aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
-          title={collapsed ? '展开' : '收起'}
-        >
-          {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
-        </Button>
+        <div className={cn('flex items-center', collapsed ? 'flex-col gap-1' : 'gap-0.5')}>
+          <ThemeToggle />
+          <Button
+            size="icon"
+            variant="ghost"
+            onClick={() => setCollapsed((v) => !v)}
+            aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
+            title={collapsed ? '展开' : '收起'}
+          >
+            {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+          </Button>
+        </div>
       </div>
 
       {/* Tab 切换（两排垂直排列）*/}

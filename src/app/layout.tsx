@@ -2,6 +2,7 @@ import type { Metadata } from 'next'
 import { Geist, Geist_Mono } from 'next/font/google'
 
 import { StreamProvider } from '@/components/stream-provider'
+import { ThemeProvider } from '@/components/theme-provider'
 
 import './globals.css'
 
@@ -29,9 +30,12 @@ export default function RootLayout({
     <html
       lang="zh-CN"
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      suppressHydrationWarning
     >
       <body className="h-screen overflow-hidden">
-        <StreamProvider>{children}</StreamProvider>
+        <ThemeProvider>
+          <StreamProvider>{children}</StreamProvider>
+        </ThemeProvider>
       </body>
     </html>
   )
