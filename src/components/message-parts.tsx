@@ -4,6 +4,7 @@ import { Check, ChevronRight, Copy, FileText, Image as ImageIcon, Layers, Loader
 import { useEffect, useState } from 'react'
 
 import { Card, CardContent } from '@/components/ui/card'
+import { AttachmentChip } from '@/components/attachment-chip'
 import { Markdown } from '@/components/markdown'
 import { fetchArtifact } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -54,6 +55,20 @@ function PartRenderer({ part }: { part: MessagePart }) {
       return <CodePart language={part.language} content={part.content} />
     case 'artifact_ref':
       return <ArtifactRefPart artifactId={part.artifactId} />
+    case 'image_attachment':
+    case 'file_attachment':
+      return (
+        <AttachmentChip
+          context="message"
+          attachment={{
+            id: part.attachmentId,
+            fileName: part.fileName,
+            size: part.size,
+            mimeType: part.mimeType,
+            kind: part.type === 'image_attachment' ? 'image' : 'file',
+          }}
+        />
+      )
     default:
       return null
   }

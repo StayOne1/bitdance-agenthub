@@ -1,15 +1,20 @@
 'use client'
 
-import { Send, Square, X } from 'lucide-react'
+import { Paperclip, Send, Square, X } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentAvatar } from '@/components/agent-avatar'
+import { AttachmentChip, PendingAttachmentChip } from '@/components/attachment-chip'
 import { QuotedMessage } from '@/components/quoted-message'
 import { Button } from '@/components/ui/button'
 import { Textarea } from '@/components/ui/textarea'
-import type { AgentRow } from '@/db/schema'
-import { abortRun, sendMessage as sendMessageAPI } from '@/lib/api'
+import type { AgentRow, AttachmentRow } from '@/db/schema'
+import {
+  abortRun,
+  sendMessage as sendMessageAPI,
+  uploadAttachment as uploadAttachmentAPI,
+} from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAppStore, useTopLevelRunningRuns } from '@/stores/app-store'
 
@@ -25,8 +30,11 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   const [highlight, setHighlight] = useState(0)
   const [sending, setSending] = useState(false)
   const [aborting, setAborting] = useState(false)
+  const [pending, setPending] = useState<AttachmentRow[]>([])
+  const [uploading, setUploading] = useState<Array<{ tempId: string; name: string }>>([])
 
   const textareaRef = useRef<HTMLTextAreaElement>(null)
+  const fileInputRef = useRef<HTMLInputElement>(null)
 
   const addLocalUserMessage = useAppStore((s) => s.addLocalUserMessage)
   const replaceLocalMessageId = useAppStore((s) => s.replaceLocalMessageId)
@@ -69,6 +77,8 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
     setContent('')
     setMentionedIds([])
     setTrigger(null)
+    setPending([])
+    setUploading([])
   }, [conversationId])
 
   const mentionedAgents = mentionedIds.map((id) => agents[id]).filter(Boolean)
@@ -131,6 +141,32 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
     setMentionedIds((prev) => prev.filter((x) => x !== id))
   }
 
+  const removePending = (id: string) => {
+    setPending((prev) => prev.filter((a) => a.id !== id))
+  }
+
+  const handleFileSelect = async (files: FileList | null) => {
+    if (!files || files.length === 0) return
+    const list = Array.from(files)
+    // 创建上传中占位
+    const placeholders = list.map((f) => ({ tempId: nanoid(), name: f.name }))
+    setUploading((prev) => [...prev, ...placeholders])
+
+    await Promise.all(
+      list.map(async (file, i) => {
+        const tempId = placeholders[i].tempId
+        try {
+          const att = await uploadAttachmentAPI(conversationId, file)
+          setPending((prev) => [...prev, att])
+        } catch (err) {
+          console.error('[MessageInput] upload failed', err)
+        } finally {
+          setUploading((prev) => prev.filter((p) => p.tempId !== tempId))
+        }
+      }),
+    )
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     // 在 popup 打开时，方向键/Enter/Esc 走 popup
     if (trigger && filtered.length > 0) {
@@ -165,28 +201,33 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
 
   const submit = async () => {
     const text = content.trim()
-    if (!text || sending || isRunning) return
+    const hasAttachments = pending.length > 0
+    if ((!text && !hasAttachments) || sending || isRunning) return
 
     const tempId = `temp_${nanoid()}`
     const parentId = replyTargetId ?? undefined
+    const submitContent = text || (hasAttachments ? '(附件)' : '')
     addLocalUserMessage({
       tempId,
       conversationId,
-      content: text,
+      content: submitContent,
       mentionedAgentIds: mentionedIds,
       parentMessageId: parentId,
     })
     setContent('')
     setMentionedIds([])
     setTrigger(null)
+    const attachmentIds = pending.map((a) => a.id)
+    setPending([])
     if (replyTargetId) setReplyTarget(conversationId, null)
     setSending(true)
 
     try {
       const { messageId } = await sendMessageAPI(conversationId, {
-        content: text,
+        content: submitContent,
         mentionedAgentIds: mentionedIds,
         parentMessageId: parentId,
+        attachmentIds,
       })
       replaceLocalMessageId(tempId, messageId)
     } catch (err) {
@@ -216,6 +257,29 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
             variant="compose"
             onDismiss={() => setReplyTarget(conversationId, null)}
           />
+        </div>
+      )}
+
+      {/* Attachments chips */}
+      {(pending.length > 0 || uploading.length > 0) && (
+        <div className="mb-2 flex flex-wrap gap-2">
+          {pending.map((a) => (
+            <AttachmentChip
+              key={a.id}
+              attachment={{
+                id: a.id,
+                fileName: a.fileName,
+                size: a.size,
+                mimeType: a.mimeType,
+                kind: a.kind,
+              }}
+              context="compose"
+              onRemove={() => removePending(a.id)}
+            />
+          ))}
+          {uploading.map((u) => (
+            <PendingAttachmentChip key={u.tempId} fileName={u.name} />
+          ))}
         </div>
       )}
 
@@ -291,6 +355,28 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
           className="min-h-[44px] max-h-40 resize-none"
           disabled={isRunning}
         />
+
+        {/* 文件上传 */}
+        <input
+          ref={fileInputRef}
+          type="file"
+          multiple
+          className="hidden"
+          onChange={(e) => {
+            void handleFileSelect(e.target.files)
+            e.target.value = '' // 允许同名文件再次选择
+          }}
+        />
+        <Button
+          type="button"
+          size="icon"
+          variant="ghost"
+          onClick={() => fileInputRef.current?.click()}
+          disabled={isRunning}
+          title="附件 / 图片"
+        >
+          <Paperclip className="size-4" />
+        </Button>
         {isRunning ? (
           <Button
             onClick={() => void abortAll()}
@@ -304,7 +390,7 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
         ) : (
           <Button
             onClick={() => void submit()}
-            disabled={!content.trim() || sending}
+            disabled={(!content.trim() && pending.length === 0) || sending}
             size="icon"
             title="发送 (Enter)"
           >
