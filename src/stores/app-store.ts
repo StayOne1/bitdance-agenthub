@@ -699,7 +699,8 @@ export const useConversationUsageTotal = (conversationId: string | null): Conver
         latestInput = u.lastInputTokens ?? u.inputTokens
       }
     }
-    result.totalTokens = result.inputTokens + result.outputTokens
+    result.totalTokens =
+      result.inputTokens + result.outputTokens + result.cacheCreationTokens + result.cacheReadTokens
     result.lastInputTokens = latestInput
     return result
   }, [runs])

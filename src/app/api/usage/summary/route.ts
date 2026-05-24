@@ -48,7 +48,9 @@ function accumulate(b: UsageBucket, u: RunUsage) {
   b.outputTokens += u.outputTokens
   b.cacheReadTokens += u.cacheReadTokens
   b.cacheCreationTokens += u.cacheCreationTokens
-  b.totalTokens += u.inputTokens + u.outputTokens
+  // totalTokens = 所有处理过的 token（含 cache 读写）；与 ChatPanel UsageBadge 口径一致
+  b.totalTokens +=
+    u.inputTokens + u.outputTokens + u.cacheReadTokens + u.cacheCreationTokens
   b.runs++
 }
 

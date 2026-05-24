@@ -203,7 +203,10 @@ export class ClaudeCodeAdapter implements AgentPlatformAdapter {
                 : (input.modelId ?? DEFAULT_MODEL)
             const input_tokens = u.input_tokens ?? 0
             const output_tokens = u.output_tokens ?? 0
+            const cache_creation = u.cache_creation_input_tokens ?? 0
             const cache_read = u.cache_read_input_tokens ?? 0
+            // Anthropic 把 prompt 拆成 input / cache_creation / cache_read 三桶；实际 prompt 大小是它们之和
+            const fullPromptSize = input_tokens + cache_creation + cache_read
             // ClaudeCode 一个 run 当作一条 message 渲染（同 messageId），所以 message.usage 等于 run usage
             yield baseEvent({
               type: 'message.usage' as const,
@@ -220,9 +223,9 @@ export class ClaudeCodeAdapter implements AgentPlatformAdapter {
               usage: {
                 inputTokens: input_tokens,
                 outputTokens: output_tokens,
-                cacheCreationTokens: u.cache_creation_input_tokens ?? 0,
+                cacheCreationTokens: cache_creation,
                 cacheReadTokens: cache_read,
-                lastInputTokens: input_tokens,
+                lastInputTokens: fullPromptSize,
                 model,
               },
             }) as StreamEvent

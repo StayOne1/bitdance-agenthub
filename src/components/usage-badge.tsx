@@ -38,16 +38,21 @@ export function UsageBadge({ conversationId }: { conversationId: string }) {
         </div>
 
         <div className="space-y-1">
-          <Row label="Input" value={total.inputTokens} highlight />
+          <Row label="新 Input" value={total.inputTokens} highlight />
           <Row label="Output" value={total.outputTokens} highlight />
           {total.cacheCreationTokens > 0 && (
-            <Row label="Cache 写入" value={total.cacheCreationTokens} />
+            <Row label="Cache 写入" value={total.cacheCreationTokens} dim />
           )}
           {total.cacheReadTokens > 0 && (
             <Row label="Cache 命中" value={total.cacheReadTokens} className="text-emerald-600" />
           )}
           <div className="my-1 border-t" />
-          <Row label="合计" value={total.totalTokens} bold />
+          <Row
+            label="实际 Prompt"
+            value={total.inputTokens + total.cacheCreationTokens + total.cacheReadTokens}
+            bold
+            hint="新+写入+命中"
+          />
           <Row label="当前 ctx" value={total.lastInputTokens} dim hint="最近一次 prompt 大小" />
           {/* Cache 命中率：cacheRead / (input + cacheRead)，只有有 cache 数据时显示 */}
           {total.cacheReadTokens > 0 && (
@@ -55,7 +60,8 @@ export function UsageBadge({ conversationId }: { conversationId: string }) {
               <span className="truncate">Cache 命中率</span>
               <span className="shrink-0 font-mono">
                 {Math.round(
-                  (total.cacheReadTokens * 100) / (total.inputTokens + total.cacheReadTokens),
+                  (total.cacheReadTokens * 100) /
+                    (total.inputTokens + total.cacheCreationTokens + total.cacheReadTokens),
                 )}
                 %
                 <span className="ml-1 text-[10px] text-muted-foreground">

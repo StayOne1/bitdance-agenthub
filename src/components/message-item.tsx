@@ -152,9 +152,14 @@ export function MessageItem({ message }: { message: MessageRow }) {
           {!isUser && message.usage && (
             <span
               className="cursor-help font-mono text-[10px] text-muted-foreground/60"
-              title={`Input: ${message.usage.inputTokens.toLocaleString()}\nOutput: ${message.usage.outputTokens.toLocaleString()}${message.usage.cacheReadTokens > 0 ? `\nCache 命中: ${message.usage.cacheReadTokens.toLocaleString()}` : ''}`}
+              title={`新 Input: ${message.usage.inputTokens.toLocaleString()}\nOutput: ${message.usage.outputTokens.toLocaleString()}${message.usage.cacheReadTokens > 0 ? `\nCache 命中: ${message.usage.cacheReadTokens.toLocaleString()}` : ''}`}
             >
-              {formatTokenShort(message.usage.inputTokens + message.usage.outputTokens)} tok
+              {formatTokenShort(
+                message.usage.inputTokens +
+                  message.usage.outputTokens +
+                  message.usage.cacheReadTokens,
+              )}{' '}
+              tok
             </span>
           )}
           {/* 引用按钮 — hover 时显示 */}
