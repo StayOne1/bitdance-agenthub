@@ -225,6 +225,61 @@ export async function listDirectory(targetPath?: string): Promise<ListDirResult>
   return json<ListDirResult>(fetch(`/api/fs/listdir${qs}`))
 }
 
+// ─── Filesystem (conversation-scoped, 文件浏览器面板用) ────────
+export interface WorkspaceListResult {
+  relPath: string
+  absolutePath: string
+  parent: string | null
+  entries: Array<{ name: string; isDirectory: boolean; size?: number }>
+}
+
+export async function workspaceListDir(
+  conversationId: string,
+  relPath = '',
+): Promise<WorkspaceListResult> {
+  const qs = relPath ? `?path=${encodeURIComponent(relPath)}` : ''
+  return json<WorkspaceListResult>(fetch(`/api/conversations/${conversationId}/fs/listdir${qs}`))
+}
+
+export interface WorkspaceReadResult {
+  path: string
+  absolutePath: string
+  cwd: string
+  size: number
+  content: string
+  truncated: boolean
+}
+
+export async function workspaceReadFile(
+  conversationId: string,
+  relPath: string,
+): Promise<WorkspaceReadResult> {
+  return json<WorkspaceReadResult>(
+    fetch(`/api/conversations/${conversationId}/fs/read?path=${encodeURIComponent(relPath)}`),
+  )
+}
+
+export interface WorkspaceWriteResult {
+  path: string
+  absolutePath: string
+  cwd: string
+  bytes: number
+}
+
+export async function workspaceWriteFile(
+  conversationId: string,
+  relPath: string,
+  content: string,
+): Promise<WorkspaceWriteResult> {
+  return json<WorkspaceWriteResult>(
+    fetch(`/api/conversations/${conversationId}/fs/write`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: relPath, content }),
+    }),
+  )
+}
+
 // ─── Artifacts ─────────────────────────────────
 export async function fetchArtifacts(): Promise<ArtifactListItem[]> {
   const { artifacts } = await json<{ artifacts: ArtifactListItem[] }>(fetch('/api/artifacts'))

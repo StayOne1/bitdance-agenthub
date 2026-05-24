@@ -1,11 +1,6 @@
-import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs'
-import path from 'node:path'
-
-import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 
-import { db, schema } from '@/db/client'
-import { assertPathWithinWorkspace, getEffectiveCwd } from '@/server/workspace-utils'
+import { getWorkspaceForConversation, writeFileInWorkspace } from '@/server/fs-service'
 
 import type { ToolDef } from './types'
 
@@ -13,10 +8,6 @@ const ArgsSchema = z.object({
   path: z.string().min(1),
   content: z.string(),
 })
-
-const MAX_WRITE_BYTES = 100 * 1024 // 100 KB / 文件
-const SANDBOX_TOTAL_BYTES = 100 * 1024 * 1024 // 100 MB
-const SANDBOX_TOTAL_FILES = 1000
 
 /**
  * fs_write —— 在 workspace 内写文件。
@@ -49,90 +40,14 @@ export const fsWriteTool: ToolDef = {
       return { ok: false, error: `Invalid args: ${parsed.error.message}` }
     }
 
-    const workspace = await db.query.workspaces.findFirst({
-      where: eq(schema.workspaces.conversationId, ctx.conversationId),
-    })
+    const workspace = await getWorkspaceForConversation(ctx.conversationId)
     if (!workspace) return { ok: false, error: 'Workspace not found' }
 
-    const bytes = Buffer.byteLength(parsed.data.content, 'utf8')
-    if (bytes > MAX_WRITE_BYTES) {
-      return {
-        ok: false,
-        error: `Content too large (${(bytes / 1024).toFixed(1)} KB > 100 KB limit)`,
-      }
-    }
-
-    let absPath: string
     try {
-      absPath = assertPathWithinWorkspace(workspace, parsed.data.path)
+      const result = writeFileInWorkspace(workspace, parsed.data.path, parsed.data.content)
+      return { ok: true, value: result }
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
-
-    // sandbox 模式额外检查总量配额
-    if (workspace.mode === 'sandbox') {
-      const usage = scanWorkspaceUsage(workspace.rootPath)
-      if (usage.bytes + bytes > SANDBOX_TOTAL_BYTES) {
-        return {
-          ok: false,
-          error: `Workspace quota exceeded (${(usage.bytes / 1024 / 1024).toFixed(1)} MB used + ${(bytes / 1024).toFixed(1)} KB > 100 MB cap)`,
-        }
-      }
-      if (usage.files + 1 > SANDBOX_TOTAL_FILES) {
-        return {
-          ok: false,
-          error: `Workspace file count exceeded (${usage.files} + 1 > 1000 cap)`,
-        }
-      }
-    }
-
-    try {
-      mkdirSync(path.dirname(absPath), { recursive: true })
-      writeFileSync(absPath, parsed.data.content, 'utf8')
-      return {
-        ok: true,
-        value: {
-          path: parsed.data.path,
-          absolutePath: absPath,
-          cwd: getEffectiveCwd(workspace),
-          bytes,
-        },
-      }
-    } catch (err) {
-      return {
-        ok: false,
-        error: `Failed to write: ${err instanceof Error ? err.message : String(err)}`,
-      }
-    }
   },
-}
-
-function scanWorkspaceUsage(rootPath: string): { bytes: number; files: number } {
-  let bytes = 0
-  let files = 0
-  if (!existsSync(rootPath)) return { bytes, files }
-  const stack: string[] = [rootPath]
-  while (stack.length > 0) {
-    const dir = stack.pop()!
-    let entries
-    try {
-      entries = readdirSync(dir, { withFileTypes: true })
-    } catch {
-      continue
-    }
-    for (const e of entries) {
-      const full = path.join(dir, e.name)
-      if (e.isDirectory()) {
-        stack.push(full)
-      } else if (e.isFile()) {
-        try {
-          bytes += statSync(full).size
-          files++
-        } catch {
-          // ignore
-        }
-      }
-    }
-  }
-  return { bytes, files }
 }

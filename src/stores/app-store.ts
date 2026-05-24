@@ -37,6 +37,14 @@ interface AppState {
   // ─── 产物预览 ──────────────────────────────────────
   previewArtifactId: string | null
 
+  // ─── 右侧文件浏览器面板（与 artifact preview 互斥）─
+  fileExplorerOpen: boolean
+
+  // ─── 中间 tab 容器：每个会话的「对话 + 打开的文件 tab」状态 ─
+  // tab id: 'chat' 表示主对话；其它是相对 workspace 的文件路径
+  openFilesByConv: Record<string, string[]>      // 文件路径列表（按打开顺序）
+  activeTabByConv: Record<string, string>        // 当前 tab id
+
   // ─── 引用回复目标（按 conversationId 分桶）───────
   replyTargetByConv: Record<string, string | null>
 
@@ -67,6 +75,11 @@ interface AppState {
   upsertArtifact(artifact: ArtifactRow): void
   removeArtifact(artifactId: string): void
   removeArtifacts(artifactIds: string[]): void
+
+  setFileExplorerOpen(open: boolean): void
+  openFile(conversationId: string, path: string): void
+  closeFile(conversationId: string, path: string): void
+  setActiveTab(conversationId: string, tab: string): void
 
   setReplyTarget(conversationId: string, messageId: string | null): void
 
@@ -105,6 +118,9 @@ export const useAppStore = create<AppState>()(
     dispatchesByRunId: {},
     activeConversationId: null,
     previewArtifactId: null,
+    fileExplorerOpen: false,
+    openFilesByConv: {},
+    activeTabByConv: {},
     replyTargetByConv: {},
     pendingAttachmentsByConv: {},
     highlightedMessageId: null,
@@ -172,11 +188,48 @@ export const useAppStore = create<AppState>()(
     openArtifactPreview: (artifactId) =>
       set((s) => {
         s.previewArtifactId = artifactId
+        s.fileExplorerOpen = false // 与文件浏览器互斥
       }),
 
     closeArtifactPreview: () =>
       set((s) => {
         s.previewArtifactId = null
+      }),
+
+    setFileExplorerOpen: (open) =>
+      set((s) => {
+        s.fileExplorerOpen = open
+        if (open) s.previewArtifactId = null // 与 artifact preview 互斥
+      }),
+
+    openFile: (conversationId, filePath) =>
+      set((s) => {
+        const list = s.openFilesByConv[conversationId] ?? []
+        if (!list.includes(filePath)) {
+          s.openFilesByConv[conversationId] = [...list, filePath]
+        }
+        s.activeTabByConv[conversationId] = filePath
+      }),
+
+    closeFile: (conversationId, filePath) =>
+      set((s) => {
+        const list = s.openFilesByConv[conversationId]
+        if (!list) return
+        const next = list.filter((p) => p !== filePath)
+        if (next.length === 0) {
+          delete s.openFilesByConv[conversationId]
+        } else {
+          s.openFilesByConv[conversationId] = next
+        }
+        // 若关掉的是当前 active，切回 chat
+        if (s.activeTabByConv[conversationId] === filePath) {
+          s.activeTabByConv[conversationId] = 'chat'
+        }
+      }),
+
+    setActiveTab: (conversationId, tab) =>
+      set((s) => {
+        s.activeTabByConv[conversationId] = tab
       }),
 
     upsertArtifact: (artifact) =>
@@ -537,3 +590,11 @@ export const useLatestUserMessageId = (conversationId: string): string | null =>
     }
     return null
   })
+
+/** 该会话当前打开的文件 tab 列表。 */
+export const useOpenFiles = (conversationId: string): string[] =>
+  useAppStore(useShallow((s) => s.openFilesByConv[conversationId] ?? []))
+
+/** 该会话当前激活的 tab id（'chat' 或文件路径）。 */
+export const useActiveTab = (conversationId: string): string =>
+  useAppStore((s) => s.activeTabByConv[conversationId] ?? 'chat')
