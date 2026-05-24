@@ -86,7 +86,7 @@ interface AppState {
 
   setReplyTarget(conversationId: string, messageId: string | null): void
 
-  setPinnedMessageIds(conversationId: string, ids: string[]): void
+  setBookmarkedMessageIds(conversationId: string, ids: string[]): void
 
   /** 批量删除消息（撤回 / 编辑场景）。同时清理 messageIdsByConv 对应桶 + replyTarget。 */
   removeMessages(conversationId: string, messageIds: string[]): void
@@ -282,10 +282,10 @@ export const useAppStore = create<AppState>()(
         else delete s.replyTargetByConv[conversationId]
       }),
 
-    setPinnedMessageIds: (conversationId, ids) =>
+    setBookmarkedMessageIds: (conversationId, ids) =>
       set((s) => {
         const conv = s.conversations[conversationId]
-        if (conv) conv.pinnedMessageIds = ids
+        if (conv) conv.bookmarkedMessageIds = ids
       }),
 
     addPendingAttachment: (conversationId, attachment) =>

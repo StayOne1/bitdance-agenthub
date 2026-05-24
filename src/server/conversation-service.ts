@@ -92,6 +92,7 @@ export async function createConversation(args: CreateConversationArgs): Promise<
         mode: args.mode,
         agentIds: args.agentIds,
         pinnedMessageIds: [],
+        bookmarkedMessageIds: [],
         archived: false,
         createdAt: now,
         updatedAt: now,
@@ -115,6 +116,7 @@ export async function createConversation(args: CreateConversationArgs): Promise<
     mode: args.mode,
     agentIds: args.agentIds,
     pinnedMessageIds: [],
+    bookmarkedMessageIds: [],
     archived: false,
     fsWriteApprovalMode: 'review',
     createdAt: now,
@@ -245,15 +247,17 @@ export async function setConversationApprovalMode(
   return withWorkspaceMeta({ ...conv, fsWriteApprovalMode: mode, updatedAt: now })
 }
 
-// ─── 收藏 / 取消收藏消息 ────────────────────────────────
+// ─── 书签消息（UI 导航用，不影响 LLM 上下文）────────────────
 /**
- * Toggle 一条消息在 conversation.pinnedMessageIds 中的存在。
- * pinnedMessageIds 同时被 agent-runner 注入到 LLM 长期上下文（spec 01）—— 用户标星 = 提醒 LLM。
+ * Toggle 一条消息在 conversation.bookmarkedMessageIds 中的存在。
+ * 用于 ConversationOutline ☆ 收藏：纯 UI 书签，不向 LLM 注入。
+ *
+ * （另有 pinnedMessageIds 字段做 LLM 长期上下文注入，语义不同，分开管理。）
  */
-export async function togglePinnedMessage(
+export async function toggleBookmarkedMessage(
   conversationId: string,
   messageId: string,
-): Promise<{ pinnedMessageIds: string[]; pinned: boolean }> {
+): Promise<{ bookmarkedMessageIds: string[]; bookmarked: boolean }> {
   const conv = await db.query.conversations.findFirst({
     where: eq(schema.conversations.id, conversationId),
   })
@@ -268,16 +272,16 @@ export async function togglePinnedMessage(
   })
   if (!msg) throw new Error(`Message not found in conversation: ${messageId}`)
 
-  const current = conv.pinnedMessageIds ?? []
-  const isPinned = current.includes(messageId)
-  const next = isPinned ? current.filter((id) => id !== messageId) : [...current, messageId]
+  const current = conv.bookmarkedMessageIds ?? []
+  const isBookmarked = current.includes(messageId)
+  const next = isBookmarked ? current.filter((id) => id !== messageId) : [...current, messageId]
 
   await db
     .update(schema.conversations)
-    .set({ pinnedMessageIds: next, updatedAt: Date.now() })
+    .set({ bookmarkedMessageIds: next, updatedAt: Date.now() })
     .where(eq(schema.conversations.id, conversationId))
 
-  return { pinnedMessageIds: next, pinned: !isPinned }
+  return { bookmarkedMessageIds: next, bookmarked: !isBookmarked }
 }
 
 // ─── 添加 Agent 到现有会话 ──────────────────────────────

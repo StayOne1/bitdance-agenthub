@@ -51,7 +51,13 @@ export const conversations = sqliteTable(
     title: text('title').notNull(),
     mode: text('mode', { enum: ['single', 'group'] }).notNull(),
     agentIds: text('agent_ids', { mode: 'json' }).$type<string[]>().notNull(),
+    /** 注入 LLM 长期上下文的重要消息（agent-runner 用，UI 暂未暴露入口）。 */
     pinnedMessageIds: text('pinned_message_ids', { mode: 'json' })
+      .$type<string[]>()
+      .notNull()
+      .default(sql`'[]'`),
+    /** 用户的 UI 书签 —— 仅用于 outline 导航定位 / 高亮，不影响 LLM 上下文。 */
+    bookmarkedMessageIds: text('bookmarked_message_ids', { mode: 'json' })
       .$type<string[]>()
       .notNull()
       .default(sql`'[]'`),

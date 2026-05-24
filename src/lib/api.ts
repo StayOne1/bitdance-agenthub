@@ -270,17 +270,17 @@ export async function editAndResendMessage(
   )
 }
 
-export interface TogglePinResult {
-  pinnedMessageIds: string[]
-  pinned: boolean
+export interface ToggleBookmarkResult {
+  bookmarkedMessageIds: string[]
+  bookmarked: boolean
 }
 
-export async function toggleMessagePin(
+export async function toggleMessageBookmark(
   messageId: string,
   conversationId: string,
-): Promise<TogglePinResult> {
-  return json<TogglePinResult>(
-    fetch(`/api/messages/${messageId}/pin`, {
+): Promise<ToggleBookmarkResult> {
+  return json<ToggleBookmarkResult>(
+    fetch(`/api/messages/${messageId}/bookmark`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ conversationId }),

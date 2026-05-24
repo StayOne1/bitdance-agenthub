@@ -142,25 +142,22 @@
 }
 
 /* 跳转后短暂的「底部辉光」高亮 —— ConversationOutline / QuotedMessage 跳转用。
-   只发光，不加描边；和现有 bubble 的 border 共存。 */
+   只发光，不加描边；和现有 bubble 的 border 共存。
+   关键帧 alpha 按近似指数衰减铺，timing-function 用 linear 让 keyframe 自身定义曲线（避免被 ease 二次扭曲）。 */
 @keyframes message-glow-pulse {
-  0% {
-    box-shadow: 0 16px 36px -8px rgba(51, 112, 255, 0);
-  }
-  20% {
-    box-shadow: 0 26px 56px -4px rgba(51, 112, 255, 0.55);
-  }
-  50% {
-    box-shadow: 0 24px 52px -6px rgba(51, 112, 255, 0.45);
-  }
-  80% {
-    box-shadow: 0 20px 44px -8px rgba(51, 112, 255, 0.2);
-  }
-  100% {
-    box-shadow: 0 16px 36px -8px rgba(51, 112, 255, 0);
-  }
+  0%   { box-shadow: 0 16px 36px -8px rgba(51, 112, 255, 0); }
+  6%   { box-shadow: 0 26px 60px -2px rgba(51, 112, 255, 0.62); }   /* 快速 ramp up */
+  12%  { box-shadow: 0 28px 64px -2px rgba(51, 112, 255, 0.65); }   /* peak */
+  20%  { box-shadow: 0 27px 60px -3px rgba(51, 112, 255, 0.55); }   /* 微衰减 */
+  32%  { box-shadow: 0 25px 56px -4px rgba(51, 112, 255, 0.44); }
+  45%  { box-shadow: 0 23px 52px -5px rgba(51, 112, 255, 0.33); }
+  58%  { box-shadow: 0 22px 48px -6px rgba(51, 112, 255, 0.23); }
+  72%  { box-shadow: 0 20px 44px -7px rgba(51, 112, 255, 0.14); }
+  85%  { box-shadow: 0 18px 40px -8px rgba(51, 112, 255, 0.07); }
+  94%  { box-shadow: 0 17px 38px -8px rgba(51, 112, 255, 0.02); }
+  100% { box-shadow: 0 16px 36px -8px rgba(51, 112, 255, 0); }
 }
 
 .message-glow {
-  animation: message-glow-pulse 2s cubic-bezier(0.22, 1, 0.36, 1);
+  animation: message-glow-pulse 2s linear;
 }

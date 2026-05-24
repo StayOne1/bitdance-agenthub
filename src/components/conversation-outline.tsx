@@ -7,7 +7,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Button } from '@/components/ui/button'
 import type { MessageRow } from '@/db/schema'
-import { toggleMessagePin } from '@/lib/api'
+import { toggleMessageBookmark } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAppStore, useMessagesForConversation } from '@/stores/app-store'
 
@@ -15,25 +15,25 @@ import { useAppStore, useMessagesForConversation } from '@/stores/app-store'
  * ConversationOutline —— ChatPanel header 的「目录」按钮。
  *
  * 点击弹 popover 列出本会话所有 user message（用户提问），点击跳转 + 短暂高亮。
- * 每条 item 旁有 ☆ 按钮可收藏；收藏列表存到 conversation.pinnedMessageIds，
- * 同时 agent-runner 会把收藏消息作为长期上下文注入 LLM（详见 spec 01）。
+ * 每条 item 右侧有 ☆ 按钮可收藏到 conversation.bookmarkedMessageIds —— 纯 UI 书签，
+ * 仅用于导航定位，不影响 LLM 上下文（与独立的 pinnedMessageIds 区分，详见 spec 01）。
  */
 export function ConversationOutline({ conversationId }: { conversationId: string }) {
   const messages = useMessagesForConversation(conversationId)
   const highlightMessage = useAppStore((s) => s.highlightMessage)
   const conversation = useAppStore((s) => s.conversations[conversationId])
-  const setPinnedMessageIds = useAppStore((s) => s.setPinnedMessageIds)
-  const pinnedIds = useMemo(
-    () => new Set(conversation?.pinnedMessageIds ?? []),
-    [conversation?.pinnedMessageIds],
+  const setBookmarkedMessageIds = useAppStore((s) => s.setBookmarkedMessageIds)
+  const bookmarkedIds = useMemo(
+    () => new Set(conversation?.bookmarkedMessageIds ?? []),
+    [conversation?.bookmarkedMessageIds],
   )
 
   const [onlyStarred, setOnlyStarred] = useState(false)
   const [busy, setBusy] = useState<string | null>(null)
 
   const userMessages = messages.filter((m) => m.role === 'user')
-  const filtered = onlyStarred ? userMessages.filter((m) => pinnedIds.has(m.id)) : userMessages
-  const starredCount = userMessages.filter((m) => pinnedIds.has(m.id)).length
+  const filtered = onlyStarred ? userMessages.filter((m) => bookmarkedIds.has(m.id)) : userMessages
+  const starredCount = userMessages.filter((m) => bookmarkedIds.has(m.id)).length
 
   if (userMessages.length === 0) return null
 
@@ -50,10 +50,10 @@ export function ConversationOutline({ conversationId }: { conversationId: string
     if (busy === id) return
     setBusy(id)
     try {
-      const result = await toggleMessagePin(id, conversationId)
-      setPinnedMessageIds(conversationId, result.pinnedMessageIds)
+      const result = await toggleMessageBookmark(id, conversationId)
+      setBookmarkedMessageIds(conversationId, result.bookmarkedMessageIds)
     } catch (err) {
-      console.error('[ConversationOutline] toggle pin failed', err)
+      console.error('[ConversationOutline] toggle bookmark failed', err)
     } finally {
       setBusy(null)
     }
@@ -66,7 +66,7 @@ export function ConversationOutline({ conversationId }: { conversationId: string
           <Button
             size="icon"
             variant="ghost"
-            title={`对话目录 · ${userMessages.length} 条提问 (${starredCount} 收藏)`}
+            title={`对话目录 · ${userMessages.length} 条提问${starredCount > 0 ? ` (${starredCount} 收藏)` : ''}`}
           />
         }
       >
@@ -106,12 +106,12 @@ export function ConversationOutline({ conversationId }: { conversationId: string
                 没有收藏的提问
               </div>
             ) : (
-              filtered.map((m, i) => (
+              filtered.map((m) => (
                 <OutlineItem
                   key={m.id}
                   index={userMessages.indexOf(m) + 1}
                   message={m}
-                  starred={pinnedIds.has(m.id)}
+                  starred={bookmarkedIds.has(m.id)}
                   busy={busy === m.id}
                   onClick={() => handleJump(m.id)}
                   onToggleStar={(e) => handleToggleStar(m.id, e)}
@@ -120,12 +120,6 @@ export function ConversationOutline({ conversationId }: { conversationId: string
             )}
           </div>
         </ScrollArea>
-        {starredCount > 0 && (
-          <div className="border-t bg-amber-50/40 px-3 py-1.5 text-[10px] text-muted-foreground dark:bg-amber-950/10">
-            <Star className="mr-1 inline size-3 fill-amber-400 text-amber-500" />
-            收藏的消息会作为长期上下文注入 LLM
-          </div>
-        )}
       </PopoverContent>
     </Popover>
   )
@@ -168,18 +162,6 @@ function OutlineItem({
     >
       <button
         type="button"
-        onClick={onToggleStar}
-        disabled={busy}
-        className={cn(
-          'mt-0.5 shrink-0 rounded p-0.5 transition disabled:opacity-50',
-          starred ? 'text-amber-500' : 'text-muted-foreground/40 hover:text-amber-500',
-        )}
-        title={starred ? '取消收藏' : '收藏为重要消息'}
-      >
-        <Star className={cn('size-3.5', starred && 'fill-amber-400')} />
-      </button>
-      <button
-        type="button"
         onClick={onClick}
         className="flex min-w-0 flex-1 items-start gap-2 text-left"
       >
@@ -193,6 +175,20 @@ function OutlineItem({
           </div>
           <div className="mt-0.5 text-[10px] text-muted-foreground">{time}</div>
         </div>
+      </button>
+      <button
+        type="button"
+        onClick={onToggleStar}
+        disabled={busy}
+        className={cn(
+          'mt-0.5 shrink-0 rounded p-0.5 transition disabled:opacity-50',
+          starred
+            ? 'text-amber-500'
+            : 'text-muted-foreground/30 opacity-0 hover:text-amber-500 group-hover:opacity-100',
+        )}
+        title={starred ? '取消收藏' : '收藏（仅用于导航定位）'}
+      >
+        <Star className={cn('size-3.5', starred && 'fill-amber-400')} />
       </button>
     </div>
   )
