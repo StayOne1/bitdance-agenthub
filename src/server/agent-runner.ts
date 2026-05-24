@@ -1,7 +1,7 @@
 import { and, desc, eq, inArray } from 'drizzle-orm'
 
 import { db, schema } from '@/db/client'
-import type { AgentRow, ArtifactRow, MessageRow } from '@/db/schema'
+import type { AgentRow, ArtifactRow, MessageRow, WorkspaceRow } from '@/db/schema'
 import type { DispatchPlanItem, MessagePart, StreamEvent } from '@/shared/types'
 
 import { agentRegistry } from './adapters/registry'
@@ -9,6 +9,7 @@ import type { AdapterAttachment, AdapterInput } from './adapters/types'
 import { getAttachmentAbsolutePath } from './attachment-service'
 import { eventBus } from './event-bus'
 import { newRunId } from './ids'
+import { getEffectiveCwd } from './workspace-utils'
 
 /**
  * AgentRunner — 执行一次 Agent 调用。
@@ -141,8 +142,8 @@ async function executeRun(runId: string, signal: AbortSignal, args: RunArgs): Pr
 
   try {
     const result = agent.isOrchestrator
-      ? await executeOrchestratorRun(runId, signal, args, agent, workspace.rootPath, prompt, attachments)
-      : await executeSimpleRun(runId, signal, args, agent, workspace.rootPath, prompt, attachments)
+      ? await executeOrchestratorRun(runId, signal, args, agent, workspace, prompt, attachments)
+      : await executeSimpleRun(runId, signal, args, agent, workspace, prompt, attachments)
     return await finalizeOk(runId, args, result)
   } catch (err) {
     if (signal.aborted) {
@@ -159,7 +160,7 @@ async function executeSimpleRun(
   signal: AbortSignal,
   args: RunArgs,
   agent: AgentRow,
-  workspacePath: string,
+  workspace: WorkspaceRow,
   prompt: string,
   attachments: AdapterAttachment[],
 ): Promise<{ artifactIds: string[]; outputMessageIds: string[] }> {
@@ -172,7 +173,7 @@ async function executeSimpleRun(
       agent,
       runId,
       prompt,
-      workspacePath,
+      workspace,
       toolNames,
       args.overrideSystemPrompt,
       attachments,
@@ -189,7 +190,7 @@ async function executeOrchestratorRun(
   signal: AbortSignal,
   args: RunArgs,
   agent: AgentRow,
-  workspacePath: string,
+  workspace: WorkspaceRow,
   userPrompt: string,
   attachments: AdapterAttachment[],
 ): Promise<{ artifactIds: string[]; outputMessageIds: string[] }> {
@@ -216,7 +217,7 @@ async function executeOrchestratorRun(
   const planStream = agentRegistry
     .getAdapter(agent)
     .stream(
-      buildAdapterInput(args, agent, runId, userPrompt, workspacePath, planToolNames, planSystemPrompt, attachments),
+      buildAdapterInput(args, agent, runId, userPrompt, workspace, planToolNames, planSystemPrompt, attachments),
       signal,
     )
 
@@ -275,7 +276,7 @@ async function executeOrchestratorRun(
         agent,
         runId,
         aggregateUserPrompt,
-        workspacePath,
+        workspace,
         aggregateToolNames,
         aggregateSystemPrompt,
         // aggregate 阶段不再带原始图片附件（避免重复传图片浪费 token；plan 阶段已经看过）
@@ -654,23 +655,27 @@ function buildAdapterInput(
   agent: AgentRow,
   runId: string,
   prompt: string,
-  workspacePath: string,
+  workspace: WorkspaceRow,
   toolNames: string[],
   systemPromptOverride: string | undefined,
   attachments: AdapterAttachment[],
 ): AdapterInput {
+  const effectiveCwd = getEffectiveCwd(workspace)
+  const baseSystemPrompt = systemPromptOverride ?? agent.systemPrompt
+  const systemPromptWithWorkspace = buildWorkspaceContextBlock(workspace) + '\n\n' + baseSystemPrompt
+
   return {
     agentId: agent.id,
     conversationId: args.conversationId,
     runId,
     prompt,
-    workspacePath,
+    workspacePath: effectiveCwd,
     toolNames,
     attachments: attachments.length > 0 ? attachments : undefined,
     customConfig:
       agent.adapterName === 'custom' && agent.modelProvider && agent.modelId
         ? {
-            systemPrompt: systemPromptOverride ?? agent.systemPrompt,
+            systemPrompt: systemPromptWithWorkspace,
             modelProvider: agent.modelProvider,
             modelId: agent.modelId,
             supportsVision: agent.supportsVision,
@@ -678,6 +683,33 @@ function buildAdapterInput(
           }
         : undefined,
   }
+}
+
+/**
+ * 给 LLM 注入「我在哪个目录工作」的 XML 块。
+ *
+ * 解决 LLM 看到 fs_read/fs_write/bash 的工具描述「inside the workspace」时
+ * 误以为是隔离沙箱、声称「无法访问本地文件」的问题（即使 workspace 实际绑定
+ * 到用户的真实项目）。
+ */
+function buildWorkspaceContextBlock(workspace: WorkspaceRow): string {
+  const cwd = getEffectiveCwd(workspace)
+  if (workspace.mode === 'local') {
+    return [
+      '<workspace_info>',
+      `  <cwd>${cwd}</cwd>`,
+      `  <mode>local</mode>`,
+      `  <note>This directory is the user's REAL local project on their machine. Files inside it are their actual code. When you use fs_read / fs_write / bash, you are reading and modifying real files — be careful. You CAN access these files directly via the fs_read / fs_write / bash tools; do not tell the user you cannot access local files.</note>`,
+      '</workspace_info>',
+    ].join('\n')
+  }
+  return [
+    '<workspace_info>',
+    `  <cwd>${cwd}</cwd>`,
+    `  <mode>sandbox</mode>`,
+    `  <note>This is an isolated sandbox directory (under .agenthub-data/). It is NOT the user's real codebase. Files you write here are only visible inside this conversation.</note>`,
+    '</workspace_info>',
+  ].join('\n')
 }
 
 // ─── Prompt 构造 ───────────────────────────────────────────

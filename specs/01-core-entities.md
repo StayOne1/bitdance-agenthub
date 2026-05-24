@@ -144,15 +144,25 @@ interface Workspace {
   conversationId: string        // unique，与 Conversation 1:1
   rootPath: string              // 绝对路径
                                 // <projectRoot>/.agenthub-data/workspaces/<conversationId>/
+  /**
+   * 'sandbox' — 隔离目录（rootPath），默认
+   * 'local'   — 绑定用户机器上的真实目录（boundPath）
+   * 决定 bash / fs 工具的 cwd 与配额规则（详见 Spec 07）
+   */
+  mode: 'sandbox' | 'local'
+  /** mode='local' 时填，绝对路径；sandbox 时为 null */
+  boundPath: string | null
   createdAt: number
 }
 ```
 
 **约束（沙箱）**：
-- `fs_read` / `fs_write` 的 path 参数 resolve 后必须落在 `rootPath` 子树内
-- `bash` 工具的 cwd 强制为 `rootPath`
-- 单 workspace 限制：100 MB 总大小 / 1000 文件数（超出拒绝写入并返回错误）
-- 删除 Conversation 时物理删除 `rootPath` 目录
+- `fs_read` / `fs_write` 的 path 参数 resolve 后必须落在 effective cwd（`local` → `boundPath`，`sandbox` → `rootPath`）子树内
+- `bash` 工具的 cwd 强制为 effective cwd
+- **sandbox 模式**：单 workspace 限制 100 MB 总大小 / 1000 文件数（超出拒绝写入）
+- **local 模式**：不强制配额（用户用 git 等手段自行管理）
+- 删除 Conversation 时物理删除 `rootPath` 目录；`boundPath` 不删（那是用户的真实项目）
+- attachments 等内部文件**始终**存于 `rootPath` 子目录，不污染 `boundPath`
 
 ---
 

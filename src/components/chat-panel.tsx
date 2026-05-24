@@ -1,6 +1,6 @@
 'use client'
 
-import { FolderOpen, MessagesSquare, UserPlus } from 'lucide-react'
+import { AlertTriangle, FolderOpen, MessagesSquare, UserPlus } from 'lucide-react'
 import { useState } from 'react'
 
 import { AddAgentDialog } from '@/components/add-agent-dialog'
@@ -54,9 +54,26 @@ export function ChatPanel() {
             ))}
           </div>
           <div className="min-w-0">
-            <div className="truncate text-sm font-medium">{conv.title}</div>
-            <div className="text-xs text-muted-foreground">
+            <div className="flex items-center gap-1.5">
+              <span className="truncate text-sm font-medium">{conv.title}</span>
+              {conv.workspaceMode === 'local' && conv.workspaceBoundPath && (
+                <span
+                  title={`本地工作目录：${conv.workspaceBoundPath}`}
+                  className="inline-flex shrink-0 items-center gap-1 rounded border border-amber-300 bg-amber-50 px-1.5 py-0.5 font-mono text-[10px] text-amber-800 dark:border-amber-900/50 dark:bg-amber-950/40 dark:text-amber-300"
+                >
+                  <AlertTriangle className="size-2.5" />
+                  本地
+                </span>
+              )}
+            </div>
+            <div className="truncate text-xs text-muted-foreground">
               {conv.mode === 'single' ? '单聊' : '群聊'} · {participantAgents.length} 位 Agent
+              {conv.workspaceMode === 'local' && conv.workspaceBoundPath && (
+                <>
+                  {' · '}
+                  <code className="font-mono">{conv.workspaceBoundPath}</code>
+                </>
+              )}
             </div>
           </div>
         </div>

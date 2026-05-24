@@ -1,8 +1,10 @@
 'use client'
 
+import { AlertTriangle, FolderSearch } from 'lucide-react'
 import { useState } from 'react'
 
 import { AgentAvatar } from '@/components/agent-avatar'
+import { DirPickerDialog } from '@/components/dir-picker-dialog'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -12,9 +14,12 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { Input } from '@/components/ui/input'
 import { createConversation } from '@/lib/api'
 import { cn } from '@/lib/utils'
 import { useAgentList, useAppStore } from '@/stores/app-store'
+
+type WorkspaceMode = 'sandbox' | 'local'
 
 export function NewConversationDialog({
   open,
@@ -29,6 +34,10 @@ export function NewConversationDialog({
 
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [creating, setCreating] = useState(false)
+  const [workspaceMode, setWorkspaceMode] = useState<WorkspaceMode>('sandbox')
+  const [boundPath, setBoundPath] = useState('')
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const mode: 'single' | 'group' = selected.size > 1 ? 'group' : 'single'
 
@@ -41,28 +50,49 @@ export function NewConversationDialog({
     })
   }
 
+  const reset = () => {
+    setSelected(new Set())
+    setWorkspaceMode('sandbox')
+    setBoundPath('')
+    setError(null)
+  }
+
   const submit = async () => {
     if (selected.size === 0 || creating) return
+    setError(null)
+
+    if (workspaceMode === 'local' && !boundPath.trim()) {
+      setError('选了「本地目录」就要填路径')
+      return
+    }
+
     setCreating(true)
     try {
       const conv = await createConversation({
         mode,
         agentIds: Array.from(selected),
+        boundPath: workspaceMode === 'local' ? boundPath.trim() : undefined,
       })
       upsertConversation(conv)
       setActive(conv.id)
-      setSelected(new Set())
+      reset()
       onOpenChange(false)
     } catch (err) {
-      console.error('[NewConversationDialog] create failed', err)
+      setError(err instanceof Error ? err.message : String(err))
     } finally {
       setCreating(false)
     }
   }
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent>
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        if (!next) reset()
+        onOpenChange(next)
+      }}
+    >
+      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>新建对话</DialogTitle>
           <DialogDescription>
@@ -107,6 +137,72 @@ export function NewConversationDialog({
           )}
         </div>
 
+        {/* 工作目录 */}
+        <div className="space-y-2 border-t pt-3">
+          <div className="text-xs font-medium text-muted-foreground">工作目录</div>
+          <label className="flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 transition hover:border-foreground/30">
+            <input
+              type="radio"
+              checked={workspaceMode === 'sandbox'}
+              onChange={() => setWorkspaceMode('sandbox')}
+              className="mt-0.5 accent-primary"
+            />
+            <div className="min-w-0 flex-1">
+              <div className="text-xs font-medium">沙箱隔离（推荐）</div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">
+                工作目录在 <code className="font-mono">.agenthub-data/</code> 内部，不接触你的真实代码
+              </div>
+            </div>
+          </label>
+          <label
+            className={cn(
+              'flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 transition hover:border-foreground/30',
+              workspaceMode === 'local' && 'border-amber-300 bg-amber-50/40 dark:border-amber-900/50 dark:bg-amber-950/20',
+            )}
+          >
+            <input
+              type="radio"
+              checked={workspaceMode === 'local'}
+              onChange={() => setWorkspaceMode('local')}
+              className="mt-0.5 accent-primary"
+            />
+            <div className="min-w-0 flex-1 space-y-1.5">
+              <div className="text-xs font-medium">绑定本地目录</div>
+              {workspaceMode === 'local' && (
+                <>
+                  <div className="flex gap-2">
+                    <Input
+                      value={boundPath}
+                      onChange={(e) => setBoundPath(e.target.value)}
+                      placeholder="/Users/me/projects/foo"
+                      className="flex-1 font-mono text-xs"
+                    />
+                    <Button
+                      type="button"
+                      variant="outline"
+                      size="sm"
+                      onClick={() => setPickerOpen(true)}
+                    >
+                      <FolderSearch className="mr-1 size-3.5" />
+                      浏览
+                    </Button>
+                  </div>
+                  <div className="flex items-start gap-1.5 text-[10px] text-amber-700 dark:text-amber-300">
+                    <AlertTriangle className="mt-0.5 size-3 shrink-0" />
+                    <span>Agent 将能读写此目录中的真实文件。请确保已 git 备份。</span>
+                  </div>
+                </>
+              )}
+            </div>
+          </label>
+        </div>
+
+        {error && (
+          <div className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-800 dark:border-red-900/40 dark:bg-red-950/30 dark:text-red-200">
+            {error}
+          </div>
+        )}
+
         <DialogFooter>
           <div className="mr-auto text-xs text-muted-foreground">
             已选 {selected.size} 位 · 将创建{mode === 'single' ? '单聊' : '群聊'}
@@ -115,10 +211,16 @@ export function NewConversationDialog({
             取消
           </Button>
           <Button onClick={() => void submit()} disabled={selected.size === 0 || creating}>
-            创建
+            {creating ? '创建中...' : '创建'}
           </Button>
         </DialogFooter>
       </DialogContent>
+
+      <DirPickerDialog
+        open={pickerOpen}
+        onOpenChange={setPickerOpen}
+        onSelect={(p) => setBoundPath(p)}
+      />
     </Dialog>
   )
 }

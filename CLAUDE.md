@@ -164,9 +164,10 @@ const BANNED_PATTERNS = [
 ### 5.3 Workspace 沙箱
 
 所有 `fs_read` / `fs_write` / `bash` 工具调用：
-- 路径必须解析后落在 `workspace.rootPath` 子树内
-- bash 的 cwd 强制为 `workspace.rootPath`
-- workspace 单目录上限 100MB / 1000 文件（超过拒绝写入）
+- 路径必须解析后落在 **effective cwd** 子树内：`workspace.mode === 'local'` 时是 `workspace.boundPath`，否则是 `workspace.rootPath`
+- bash 的 cwd 强制为 effective cwd
+- **sandbox 模式**：workspace 单目录上限 100MB / 1000 文件（超过拒绝写入）
+- **local 模式**：不强制配额（用户用 git 等管理自己的真实项目）；创建会话时 `isPathSafe` 已拒过明显敏感目录（`~/.ssh`、`/etc` 等）
 
 ### 5.4 API Key 管理
 

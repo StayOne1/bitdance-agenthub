@@ -72,6 +72,9 @@ export const toolRegistry = buildRegistry()
 | `read_artifact` | 读已有产物的完整内容 | 读 DB | 跨任务复用产物的 agent（Orchestrator 派的子 agent 常用） |
 | `read_attachment` | 读用户上传附件 | 读文件系统 | 处理用户文档 / 文本附件的 agent |
 | `plan_tasks` | Orchestrator 拆解子任务 | 无（输出端工具） | **仅 Orchestrator** |
+| `fs_read` | 读 workspace 内文本文件 | 读文件系统 | 需要看用户项目代码的 agent |
+| `fs_write` | 写 workspace 内文本文件 | 写文件系统 | 需要生成 / 修改文件的 agent |
+| `bash` | 在 workspace 内跑 shell 命令 | 进程 / 文件系统 | 需要 git / 编译 / 测试的 agent |
 
 ### write_artifact
 
@@ -134,6 +137,55 @@ export const toolRegistry = buildRegistry()
 ```
 
 **装备约束**：只有 `isOrchestrator=true` 的 agent 才应装备 `plan_tasks`（service 层未强制，但前端 UI 不允许给非 Orchestrator agent 勾选）。
+
+### fs_read
+
+源文件：`src/server/tools/fs-read.ts`
+
+读 workspace 内文本文件。
+
+**参数**：`{ path: string }`，相对（基于 effective cwd）或绝对路径，resolve 后必须落在 effective cwd 子树内（`assertPathWithinWorkspace`，详见 `src/server/workspace-utils.ts`）。
+
+**限制**：
+- 文件大小上限 **1 MB**（`statSync.size > 1_048_576` 拒）
+- 文本截断到 **50,000 字符**（同 `read_attachment` 风格）
+- 仅 utf-8
+
+**返回**：`{ path, absolutePath, cwd, size, content, truncated }`
+
+### fs_write
+
+源文件：`src/server/tools/fs-write.ts`
+
+写 workspace 内文本文件。
+
+**参数**：`{ path: string, content: string }`。路径同 `fs_read` 沙箱规则；父目录自动 `mkdir -p`。
+
+**限制**：
+- 单文件大小上限 **100 KB**（`Buffer.byteLength`）
+- **sandbox 模式**额外检查 workspace 总量：累计 size > 100 MB 或文件数 > 1000 拒（递归扫 `rootPath`）
+- **local 模式**跳过总量检查（用户自管理）
+
+**返回**：`{ path, absolutePath, cwd, bytes }`
+
+### bash
+
+源文件：`src/server/tools/bash.ts`
+
+在 workspace 内跑 shell 命令。
+
+**参数**：`{ command: string }`。
+
+**流程**：
+1. 命中 CLAUDE.md §5.2 黑名单（`rm -rf /` / `sudo` / `chmod ... /` / fork bomb / `curl|sh` / `wget|sh` / `eval` / `exec`）→ 拒
+2. `child_process.spawn(shell.cmd, shell.args(command), { cwd: getEffectiveCwd(workspace) })`
+   - 跨平台：`getShell()` macOS/Linux 返回 `{ cmd: 'sh', args: c => ['-c', c] }`，Windows 返回 `{ cmd: 'cmd.exe', args: c => ['/c', c] }`（本轮只验证 macOS/Linux，Windows 标记 P2）
+3. stdout + stderr 合并截断 **10000 字符**
+4. **30s 超时**：`setTimeout → child.kill('SIGTERM')`
+5. `ctx.abortSignal` 触发同样 kill
+6. **不支持** stdin / 环境变量定制 / pty / TUI
+
+**返回**：`{ cwd, command, exitCode, output, truncated, timedOut }`
 
 ---
 
@@ -221,14 +273,13 @@ LLM 决定调用 →  Adapter emit  tool.call (StreamEvent)
 - **bash 命令前匹配 CLAUDE.md §5.2 黑名单**（rm -rf /、sudo、fork bomb、curl pipe shell 等）
 - **不引入新依赖而不在 PR 中说明**（CLAUDE.md §4.3）
 
-**TODO 工具（CLAUDE.md / 用户期望提到但代码未实装）**：
+**TODO 工具（CLAUDE.md 提到但仍未实装）**：
 
-- `bash` —— 在 workspace 内跑 shell 命令。需要：黑名单 + 输出截断 + 超时 + AbortSignal 中止
-- `fs_read` —— 读 workspace 文件（路径校验）
-- `fs_write` —— 写 workspace 文件（路径校验 + size 限制 100MB / 1000 files，见 CLAUDE.md §5.3）
 - `web_fetch` —— 抓取 URL 内容（SSRF 防护：禁止 localhost / 内网 IP / file://）
 
-新人不要以为这些工具已经存在；要么先实现，要么按 Spec 07 §「新增工具步骤」走。
+**bash / fs_read / fs_write 已实装**（详见上方各自小节）。
+
+新人不要以为未实装的工具已经存在；要么先实现，要么按 Spec 07 §「新增工具步骤」走。
 
 ---
 

@@ -4,7 +4,7 @@ import { enableMapSet } from 'immer'
 import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 
-import type { AgentRunRow, AgentRow, ArtifactRow, AttachmentRow, ConversationRow, MessageRow } from '@/db/schema'
+import type { AgentRunRow, AgentRow, ArtifactRow, AttachmentRow, ConversationRow, ConversationWithMeta, MessageRow } from '@/db/schema'
 import type { DispatchPlanItem, MessagePart, StreamEvent } from '@/shared/types'
 
 enableMapSet()
@@ -19,7 +19,7 @@ export interface DispatchState {
 
 interface AppState {
   // ─── 实体 ──────────────────────────────────────────
-  conversations: Record<string, ConversationRow>
+  conversations: Record<string, ConversationWithMeta>
   agents: Record<string, AgentRow>
   messages: Record<string, MessageRow>
   artifacts: Record<string, ArtifactRow>
@@ -49,8 +49,8 @@ interface AppState {
   // ─── actions ───────────────────────────────────────
   setStreamConnected(connected: boolean): void
 
-  setConversations(list: ConversationRow[]): void
-  upsertConversation(conv: ConversationRow): void
+  setConversations(list: ConversationWithMeta[]): void
+  upsertConversation(conv: ConversationWithMeta): void
   removeConversation(id: string): void
 
   setAgents(list: AgentRow[]): void

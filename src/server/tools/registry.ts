@@ -1,3 +1,6 @@
+import { bashTool } from './bash'
+import { fsReadTool } from './fs-read'
+import { fsWriteTool } from './fs-write'
 import { planTasksTool } from './plan-tasks'
 import { readArtifactTool } from './read-artifact'
 import { readAttachmentTool } from './read-attachment'
@@ -57,6 +60,9 @@ function buildRegistry(): ToolRegistry {
   reg.register(readArtifactTool)
   reg.register(readAttachmentTool)
   reg.register(planTasksTool)
+  reg.register(fsReadTool)
+  reg.register(fsWriteTool)
+  reg.register(bashTool)
   return reg
 }
 

@@ -32,7 +32,7 @@ const PROVIDER_DEFAULTS: Record<Provider, { label: string; defaultModel: string 
   'volcano-ark': { label: '火山方舟 (豆包)', defaultModel: 'doubao-seed-2-0-lite-260428' },
 }
 
-const AVAILABLE_TOOLS = ['write_artifact', 'read_artifact', 'read_attachment'] as const
+const AVAILABLE_TOOLS = ['write_artifact', 'read_artifact', 'read_attachment', 'fs_read', 'fs_write', 'bash'] as const
 
 /**
  * 创建 / 编辑 Agent 的对话框。

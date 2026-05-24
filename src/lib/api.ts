@@ -1,4 +1,11 @@
-import type { AgentRow, ArtifactRow, AttachmentRow, ConversationRow, MessageRow } from '@/db/schema'
+import type {
+  AgentRow,
+  ArtifactRow,
+  AttachmentRow,
+  ConversationRow,
+  ConversationWithMeta,
+  MessageRow,
+} from '@/db/schema'
 
 export interface ArtifactListItem {
   id: string
@@ -71,8 +78,8 @@ export async function deleteAgent(agentId: string): Promise<void> {
 }
 
 // ─── Conversations ──────────────────────────────
-export async function fetchConversations(): Promise<ConversationRow[]> {
-  const { conversations } = await json<{ conversations: ConversationRow[] }>(
+export async function fetchConversations(): Promise<ConversationWithMeta[]> {
+  const { conversations } = await json<{ conversations: ConversationWithMeta[] }>(
     fetch('/api/conversations'),
   )
   return conversations
@@ -82,10 +89,11 @@ export interface CreateConversationBody {
   title?: string
   mode: 'single' | 'group'
   agentIds: string[]
+  boundPath?: string
 }
 
-export async function createConversation(body: CreateConversationBody): Promise<ConversationRow> {
-  const { conversation } = await json<{ conversation: ConversationRow }>(
+export async function createConversation(body: CreateConversationBody): Promise<ConversationWithMeta> {
+  const { conversation } = await json<{ conversation: ConversationWithMeta }>(
     fetch('/api/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -104,8 +112,8 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 export async function addAgentsToConversation(
   conversationId: string,
   addAgentIds: string[],
-): Promise<ConversationRow> {
-  const { conversation } = await json<{ conversation: ConversationRow }>(
+): Promise<ConversationWithMeta> {
+  const { conversation } = await json<{ conversation: ConversationWithMeta }>(
     fetch(`/api/conversations/${conversationId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -118,8 +126,8 @@ export async function addAgentsToConversation(
 export async function renameConversation(
   conversationId: string,
   title: string,
-): Promise<ConversationRow> {
-  const { conversation } = await json<{ conversation: ConversationRow }>(
+): Promise<ConversationWithMeta> {
+  const { conversation } = await json<{ conversation: ConversationWithMeta }>(
     fetch(`/api/conversations/${conversationId}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
@@ -203,6 +211,18 @@ export async function editAndResendMessage(
       body: JSON.stringify({ conversationId, content }),
     }),
   )
+}
+
+// ─── Filesystem (DirPicker) ────────────────────
+export interface ListDirResult {
+  path: string
+  parent: string | null
+  entries: Array<{ name: string; isDirectory: boolean }>
+}
+
+export async function listDirectory(targetPath?: string): Promise<ListDirResult> {
+  const qs = targetPath ? `?path=${encodeURIComponent(targetPath)}` : ''
+  return json<ListDirResult>(fetch(`/api/fs/listdir${qs}`))
 }
 
 // ─── Artifacts ─────────────────────────────────

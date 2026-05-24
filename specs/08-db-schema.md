@@ -128,13 +128,19 @@ workspaces {
   id              text PK              // ws_<nanoid>
   conversation_id text NOT NULL UNIQUE FK→conversations.id  ON DELETE CASCADE
   root_path       text NOT NULL        // 绝对路径，物理位于 .agenthub-data/workspaces/<conversationId>/
+  mode            text NOT NULL default 'sandbox'  // 'sandbox' | 'local'
+  bound_path      text                 // mode='local' 时填，绝对路径；sandbox 时为 null
   created_at      int  NOT NULL
 }
 ```
 
 **1:1 与 conversations**：`UNIQUE(conversation_id)` 保证。
 
-**物理目录**：DB 行删除时 cascade 由 SQLite 处理；磁盘目录由 `conversation-service.deleteConversation` 手动 `rmSync(workspace.rootPath, { recursive: true, force: true })`（容错：失败仅 warn，不阻断事务）。
+**mode 语义**（详见 Spec 01 + Spec 07）：
+- `sandbox`：bash / fs_read / fs_write 的 cwd 用 `root_path`（隔离目录），强制 100MB / 1000 文件配额
+- `local`：cwd 用 `bound_path`（用户本机真实目录），不强制配额
+
+**物理目录**：DB 行删除时 cascade 由 SQLite 处理；`root_path` 目录由 `conversation-service.deleteConversation` 手动 `rmSync(...)` 清除（容错：失败仅 warn）。`bound_path` 不删（那是用户的真实项目）。
 
 ---
 

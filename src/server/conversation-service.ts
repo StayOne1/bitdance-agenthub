@@ -1,9 +1,10 @@
-import { mkdirSync, rmSync } from 'node:fs'
+import { accessSync, constants, mkdirSync, rmSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 import { and, desc, eq, gte, inArray } from 'drizzle-orm'
 
 import { db, schema } from '@/db/client'
+import type { ConversationWithMeta } from '@/db/schema'
 import type { MessagePart } from '@/shared/types'
 
 import { AgentRunner } from './agent-runner'
@@ -12,6 +13,7 @@ import {
   newMessageId,
   newWorkspaceId,
 } from './ids'
+import { isPathSafe } from './workspace-utils'
 
 const WORKSPACES_ROOT = path.resolve(process.cwd(), '.agenthub-data', 'workspaces')
 
@@ -20,9 +22,11 @@ export interface CreateConversationArgs {
   title?: string
   mode: 'single' | 'group'
   agentIds: string[]
+  /** 用户指定的本地绝对路径；不填走沙箱（默认） */
+  boundPath?: string
 }
 
-export async function createConversation(args: CreateConversationArgs) {
+export async function createConversation(args: CreateConversationArgs): Promise<ConversationWithMeta> {
   if (args.agentIds.length === 0) {
     throw new Error('At least one agent is required')
   }
@@ -43,11 +47,39 @@ export async function createConversation(args: CreateConversationArgs) {
     throw new Error(`Agents not found: ${missing.join(', ')}`)
   }
 
+  // 解析 boundPath（如果提供）
+  let workspaceMode: 'sandbox' | 'local' = 'sandbox'
+  let resolvedBoundPath: string | null = null
+  if (args.boundPath && args.boundPath.trim()) {
+    const candidate = path.resolve(args.boundPath.trim())
+    if (!path.isAbsolute(candidate)) {
+      throw new Error('boundPath must be absolute')
+    }
+    let stat
+    try {
+      stat = statSync(candidate)
+    } catch {
+      throw new Error(`Path does not exist: ${candidate}`)
+    }
+    if (!stat.isDirectory()) throw new Error(`Not a directory: ${candidate}`)
+    try {
+      accessSync(candidate, constants.R_OK | constants.W_OK)
+    } catch {
+      throw new Error(`Not readable/writable: ${candidate}`)
+    }
+    if (!isPathSafe(candidate)) {
+      throw new Error(`Path is not allowed (system / sensitive directory): ${candidate}`)
+    }
+    workspaceMode = 'local'
+    resolvedBoundPath = candidate
+  }
+
   const now = Date.now()
   const conversationId = newConversationId()
   const workspaceId = newWorkspaceId()
   const rootPath = path.join(WORKSPACES_ROOT, conversationId)
 
+  // 内部 sandbox 目录无论 mode 都要 mkdir，用于 attachments 等内部文件
   mkdirSync(rootPath, { recursive: true })
 
   const title = args.title ?? defaultTitleFor(agents)
@@ -70,6 +102,8 @@ export async function createConversation(args: CreateConversationArgs) {
         id: workspaceId,
         conversationId,
         rootPath,
+        mode: workspaceMode,
+        boundPath: resolvedBoundPath,
         createdAt: now,
       })
       .run()
@@ -80,9 +114,12 @@ export async function createConversation(args: CreateConversationArgs) {
     title,
     mode: args.mode,
     agentIds: args.agentIds,
+    pinnedMessageIds: [],
+    archived: false,
     createdAt: now,
     updatedAt: now,
-    archived: false,
+    workspaceMode,
+    workspaceBoundPath: resolvedBoundPath,
   }
 }
 
@@ -91,10 +128,43 @@ function defaultTitleFor(agents: { name: string }[]): string {
   return agents.map((a) => a.name).join(' / ')
 }
 
+/** 给单条 Conversation 行附上 workspace mode / boundPath。 */
+async function withWorkspaceMeta(
+  conv: typeof schema.conversations.$inferSelect,
+): Promise<ConversationWithMeta> {
+  const ws = await db.query.workspaces.findFirst({
+    where: eq(schema.workspaces.conversationId, conv.id),
+  })
+  return {
+    ...conv,
+    workspaceMode: (ws?.mode ?? 'sandbox') as 'sandbox' | 'local',
+    workspaceBoundPath: ws?.boundPath ?? null,
+  }
+}
+
 // ─── 列出会话 ────────────────────────────────────────────
-export async function listConversations() {
-  return db.query.conversations.findMany({
+export async function listConversations(): Promise<ConversationWithMeta[]> {
+  const convs = await db.query.conversations.findMany({
     orderBy: [desc(schema.conversations.updatedAt)],
+  })
+  if (convs.length === 0) return []
+
+  // 一次 JOIN 出所有 workspace（每会话 1:1）
+  const workspaces = await db.query.workspaces.findMany({
+    where: inArray(
+      schema.workspaces.conversationId,
+      convs.map((c) => c.id),
+    ),
+  })
+  const wsByConv = new Map(workspaces.map((w) => [w.conversationId, w]))
+
+  return convs.map((c) => {
+    const ws = wsByConv.get(c.id)
+    return {
+      ...c,
+      workspaceMode: (ws?.mode ?? 'sandbox') as 'sandbox' | 'local',
+      workspaceBoundPath: ws?.boundPath ?? null,
+    }
   })
 }
 
@@ -133,7 +203,10 @@ export async function deleteConversation(conversationId: string): Promise<void> 
 }
 
 // ─── 重命名会话 ──────────────────────────────────────────
-export async function renameConversation(conversationId: string, title: string) {
+export async function renameConversation(
+  conversationId: string,
+  title: string,
+): Promise<ConversationWithMeta> {
   const conv = await db.query.conversations.findFirst({
     where: eq(schema.conversations.id, conversationId),
   })
@@ -149,7 +222,7 @@ export async function renameConversation(conversationId: string, title: string) 
     .set({ title: trimmed, updatedAt: now })
     .where(eq(schema.conversations.id, conversationId))
 
-  return { ...conv, title: trimmed, updatedAt: now }
+  return withWorkspaceMeta({ ...conv, title: trimmed, updatedAt: now })
 }
 
 // ─── 添加 Agent 到现有会话 ──────────────────────────────
@@ -158,7 +231,7 @@ export interface AddAgentsArgs {
   agentIds: string[]
 }
 
-export async function addAgentsToConversation(args: AddAgentsArgs) {
+export async function addAgentsToConversation(args: AddAgentsArgs): Promise<ConversationWithMeta> {
   const conv = await db.query.conversations.findFirst({
     where: eq(schema.conversations.id, args.conversationId),
   })
@@ -184,12 +257,12 @@ export async function addAgentsToConversation(args: AddAgentsArgs) {
     .set({ agentIds: merged, mode: newMode, updatedAt: now })
     .where(eq(schema.conversations.id, args.conversationId))
 
-  return {
+  return withWorkspaceMeta({
     ...conv,
     agentIds: merged,
     mode: newMode,
     updatedAt: now,
-  }
+  })
 }
 
 // ─── 发消息 ──────────────────────────────────────────────

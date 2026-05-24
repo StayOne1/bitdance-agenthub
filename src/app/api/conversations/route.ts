@@ -7,6 +7,7 @@ const CreateBody = z.object({
   title: z.string().optional(),
   mode: z.enum(['single', 'group']),
   agentIds: z.array(z.string()).min(1),
+  boundPath: z.string().optional(),
 })
 
 export async function GET() {

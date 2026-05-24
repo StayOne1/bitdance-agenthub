@@ -116,6 +116,13 @@ export const workspaces = sqliteTable('workspaces', {
     .unique()
     .references(() => conversations.id, { onDelete: 'cascade' }),
   rootPath: text('root_path').notNull(),
+  /**
+   * 'sandbox' — 隔离目录（.agenthub-data/workspaces/<convId>），默认
+   * 'local'   — 绑定用户机器上的真实目录
+   */
+  mode: text('mode', { enum: ['sandbox', 'local'] }).notNull().default('sandbox'),
+  /** mode='local' 时填，绝对路径；sandbox 时为 null */
+  boundPath: text('bound_path'),
   createdAt: integer('created_at').notNull(),
 })
 
@@ -169,6 +176,16 @@ export type AgentInsert = typeof agents.$inferInsert
 
 export type ConversationRow = typeof conversations.$inferSelect
 export type ConversationInsert = typeof conversations.$inferInsert
+
+/**
+ * Conversation 行 + 关联 workspace 的 mode / boundPath（前端需要在多处显示
+ * 「本地工作目录」标识，每次 lazy fetch workspace 太啰嗦，listConversations
+ * 一次 JOIN 出来）。
+ */
+export interface ConversationWithMeta extends ConversationRow {
+  workspaceMode: 'sandbox' | 'local'
+  workspaceBoundPath: string | null
+}
 
 export type MessageRow = typeof messages.$inferSelect
 export type MessageInsert = typeof messages.$inferInsert
