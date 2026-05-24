@@ -1,7 +1,7 @@
-import { and, eq, inArray } from 'drizzle-orm'
+import { and, desc, eq, inArray } from 'drizzle-orm'
 
 import { db, schema } from '@/db/client'
-import type { AgentRow, ArtifactRow } from '@/db/schema'
+import type { AgentRow, ArtifactRow, MessageRow } from '@/db/schema'
 import type { DispatchPlanItem, MessagePart, StreamEvent } from '@/shared/types'
 
 import { agentRegistry } from './adapters/registry'
@@ -753,8 +753,52 @@ async function buildSubAgentPrompt(
     .map((a) => `  <artifact id="${a.id}" type="${a.type}" title=${JSON.stringify(a.title)} />`)
     .join('\n')
 
+  // spec 06 §「子 Agent 看到的上下文」要求注入最近 N 条群聊 + 全部 pin。
+  const RECENT_LIMIT = 5
+  const recent = (
+    await db.query.messages.findMany({
+      where: eq(schema.messages.conversationId, conversationId),
+      orderBy: [desc(schema.messages.createdAt)],
+      limit: RECENT_LIMIT,
+    })
+  ).reverse()
+
+  const conv = await db.query.conversations.findFirst({
+    where: eq(schema.conversations.id, conversationId),
+  })
+  const pinIds = conv?.pinnedMessageIds ?? []
+  const pinned = pinIds.length
+    ? await db.query.messages.findMany({
+        where: inArray(schema.messages.id, pinIds),
+        orderBy: [schema.messages.createdAt],
+      })
+    : []
+
+  // 一次性查所有出现过的 agent name，避免循环里 N+1
+  const agentIds = new Set<string>()
+  for (const m of [...recent, ...pinned]) if (m.agentId) agentIds.add(m.agentId)
+  const agents = agentIds.size
+    ? await db.query.agents.findMany({
+        where: inArray(schema.agents.id, [...agentIds]),
+      })
+    : []
+  const agentNameById = new Map(agents.map((a) => [a.id, a.name]))
+
+  const renderMessage = (m: MessageRow): string => {
+    const from =
+      m.role === 'user' ? 'user' : (m.agentId && agentNameById.get(m.agentId)) || m.role
+    const text = extractTextFromParts(m.parts).trim()
+    if (!text) return ''
+    return `    <message from=${JSON.stringify(from)}>${escapeXml(text)}</message>`
+  }
+
+  const recentXml = recent.map(renderMessage).filter(Boolean).join('\n')
+  const pinnedXml = pinned.map(renderMessage).filter(Boolean).join('\n')
+
   return [
     '<context>',
+    recentXml && `  <recent_conversation>\n${recentXml}\n  </recent_conversation>`,
+    pinnedXml && `  <pinned_messages>\n${pinnedXml}\n  </pinned_messages>`,
     upstreamArtifactsXml &&
       `  <upstream_artifacts>\n${upstreamArtifactsXml}\n  </upstream_artifacts>`,
     `  <existing_artifacts>\n${existingXml || '    （无）'}\n  </existing_artifacts>`,
@@ -768,6 +812,10 @@ async function buildSubAgentPrompt(
   ]
     .filter(Boolean)
     .join('\n')
+}
+
+function escapeXml(s: string): string {
+  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
 }
 
 async function buildAggregatePrompt(
