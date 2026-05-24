@@ -5,7 +5,7 @@ import { create } from 'zustand'
 import { immer } from 'zustand/middleware/immer'
 
 import type { AgentRunRow, AgentRow, ArtifactRow, AttachmentRow, ConversationRow, ConversationWithMeta, MessageRow } from '@/db/schema'
-import type { DispatchPlanItem, MessagePart, StreamEvent } from '@/shared/types'
+import type { DispatchPlanItem, MessagePart, PendingWrite, StreamEvent } from '@/shared/types'
 
 enableMapSet()
 
@@ -51,6 +51,9 @@ interface AppState {
   // ─── 待发送的附件（按 conversationId 分桶）。文件库和 MessageInput 共享。
   pendingAttachmentsByConv: Record<string, AttachmentRow[]>
 
+  // ─── Agent fs_write 审批等待队列（按 conversationId 分桶）─
+  pendingWritesByConv: Record<string, PendingWrite[]>
+
   // ─── 流连接状态 ────────────────────────────────────
   streamConnected: boolean
 
@@ -90,6 +93,8 @@ interface AppState {
   removePendingAttachment(conversationId: string, attachmentId: string): void
   clearPendingAttachments(conversationId: string): void
 
+  setPendingWritesForConversation(conversationId: string, list: PendingWrite[]): void
+
   /** 高亮指定消息 1.5 秒（点击「引用」预览时的跳转反馈） */
   highlightedMessageId: string | null
   highlightMessage(messageId: string): void
@@ -123,6 +128,7 @@ export const useAppStore = create<AppState>()(
     activeTabByConv: {},
     replyTargetByConv: {},
     pendingAttachmentsByConv: {},
+    pendingWritesByConv: {},
     highlightedMessageId: null,
     streamConnected: false,
 
@@ -293,6 +299,12 @@ export const useAppStore = create<AppState>()(
     clearPendingAttachments: (conversationId) =>
       set((s) => {
         delete s.pendingAttachmentsByConv[conversationId]
+      }),
+
+    setPendingWritesForConversation: (conversationId, list) =>
+      set((s) => {
+        if (list.length === 0) delete s.pendingWritesByConv[conversationId]
+        else s.pendingWritesByConv[conversationId] = list
       }),
 
     highlightMessage: (messageId) => {
@@ -517,13 +529,29 @@ export const useAppStore = create<AppState>()(
           }
 
           case 'dispatch.end': {
-            // dispatch.end 没有 parentRunId，得通过 childRunId 反查
+            // dispatch.end 没有 parentRunId,得通过 childRunId 反查
             for (const d of Object.values(s.dispatchesByRunId)) {
               if (d.childRunIds[event.taskId] === event.childRunId) {
                 d.taskStatus[event.taskId] = event.status
                 return
               }
             }
+            return
+          }
+
+          case 'fs_write.pending': {
+            const list = s.pendingWritesByConv[event.conversationId] ?? []
+            if (list.some((p) => p.id === event.pendingWrite.id)) return
+            s.pendingWritesByConv[event.conversationId] = [...list, event.pendingWrite]
+            return
+          }
+
+          case 'fs_write.resolved': {
+            const list = s.pendingWritesByConv[event.conversationId]
+            if (!list) return
+            const next = list.filter((p) => p.id !== event.pendingId)
+            if (next.length === 0) delete s.pendingWritesByConv[event.conversationId]
+            else s.pendingWritesByConv[event.conversationId] = next
             return
           }
 
@@ -598,3 +626,7 @@ export const useOpenFiles = (conversationId: string): string[] =>
 /** 该会话当前激活的 tab id（'chat' 或文件路径）。 */
 export const useActiveTab = (conversationId: string): string =>
   useAppStore((s) => s.activeTabByConv[conversationId] ?? 'chat')
+
+/** 该会话当前所有待审批的 fs_write（review 模式下 agent 想改文件，等用户决定）。 */
+export const usePendingWrites = (conversationId: string | null): PendingWrite[] =>
+  useAppStore(useShallow((s) => (conversationId ? s.pendingWritesByConv[conversationId] ?? [] : [])))

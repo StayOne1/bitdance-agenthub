@@ -57,6 +57,12 @@ interface Conversation {
   agentIds: string[]            // 参与的 Agent（单聊 1 个；群聊 ≥ 2 个）
   pinnedMessageIds: string[]    // 用户 pin 的关键消息，作为长期上下文
 
+  /** Agent fs_write 工具的审批策略（人手编辑文件不走审批）：
+   *  - 'review' (默认): Agent 调 fs_write 时弹 diff 对话框等用户应用 / 拒绝
+   *  - 'auto'         : Agent 写入直接生效，不询问
+   *  详见 Spec 07「fs_write 审批模式」。 */
+  fsWriteApprovalMode: 'auto' | 'review'
+
   archived: boolean
   createdAt: number
   updatedAt: number             // 用于会话列表排序（按最近活跃）

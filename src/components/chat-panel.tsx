@@ -1,12 +1,15 @@
 'use client'
 
-import { AlertTriangle, FolderOpen, FolderTree, Layers, MessagesSquare, UserPlus, X } from 'lucide-react'
-import { useState } from 'react'
+import { AlertTriangle, FilePenLine, FolderOpen, FolderTree, Layers, MessagesSquare, UserPlus, X } from 'lucide-react'
+import { useEffect, useState } from 'react'
 
 import { AddAgentDialog } from '@/components/add-agent-dialog'
 import { AgentInfoPopover } from '@/components/agent-info-popover'
 import { FileLibraryDialog } from '@/components/file-library-dialog'
 import { FileTab } from '@/components/file-tab'
+import { PendingWriteDiffTab } from '@/components/pending-write-diff-tab'
+import { PendingWritesPanel } from '@/components/pending-writes-panel'
+import { diffTabPendingId, isDiffTabId } from '@/components/pending-writes-panel'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { MessageInput } from '@/components/message-input'
@@ -17,6 +20,7 @@ import {
   useActiveTab,
   useAppStore,
   useOpenFiles,
+  usePendingWrites,
 } from '@/stores/app-store'
 
 export function ChatPanel() {
@@ -34,6 +38,18 @@ export function ChatPanel() {
 
   const openFiles = useOpenFiles(conv?.id ?? '')
   const activeTab = useActiveTab(conv?.id ?? '')
+  const pendingWrites = usePendingWrites(conv?.id ?? null)
+  const pendingById = new Map(pendingWrites.map((p) => [p.id, p]))
+
+  // Pending 被 resolve（其他客户端 / SSE 移除）后，关闭对应的 diff tab —— 即使该 tab 当前在后台
+  useEffect(() => {
+    if (!conv) return
+    for (const tabId of openFiles) {
+      if (isDiffTabId(tabId) && !pendingById.has(diffTabPendingId(tabId))) {
+        closeFile(conv.id, tabId)
+      }
+    }
+  }, [conv, openFiles, pendingById, closeFile])
 
   if (!conv) {
     return (
@@ -139,7 +155,7 @@ export function ChatPanel() {
         </div>
       </header>
 
-      {/* Tab bar：仅在有打开的文件时显示（避免单 chat tab 时浪费空间） */}
+      {/* Tab bar：仅在有打开的文件 / diff 时显示（避免单 chat tab 时浪费空间） */}
       {openFiles.length > 0 && (
         <div className="flex shrink-0 items-center gap-1 overflow-x-auto border-b bg-card/50 px-2 py-1 text-xs">
           <TabButton
@@ -147,25 +163,46 @@ export function ChatPanel() {
             active={activeTab === 'chat'}
             onClick={() => setActiveTab(conv.id, 'chat')}
           />
-          {openFiles.map((p) => (
-            <TabButton
-              key={p}
-              label={p.split('/').pop() ?? p}
-              tooltip={p}
-              active={activeTab === p}
-              onClick={() => setActiveTab(conv.id, p)}
-              onClose={() => closeFile(conv.id, p)}
-            />
-          ))}
+          {openFiles.map((tabId) => {
+            if (isDiffTabId(tabId)) {
+              const pw = pendingById.get(diffTabPendingId(tabId))
+              const name = pw ? pw.path.split('/').pop() ?? pw.path : '已处理'
+              return (
+                <TabButton
+                  key={tabId}
+                  label={`diff: ${name}`}
+                  tooltip={pw?.path}
+                  icon={<FilePenLine className="size-3 text-[#3370FF]" />}
+                  active={activeTab === tabId}
+                  onClick={() => setActiveTab(conv.id, tabId)}
+                  onClose={() => closeFile(conv.id, tabId)}
+                  highlight
+                />
+              )
+            }
+            return (
+              <TabButton
+                key={tabId}
+                label={tabId.split('/').pop() ?? tabId}
+                tooltip={tabId}
+                active={activeTab === tabId}
+                onClick={() => setActiveTab(conv.id, tabId)}
+                onClose={() => closeFile(conv.id, tabId)}
+              />
+            )
+          })}
         </div>
       )}
 
-      {/* 主体：chat 或 file tab */}
+      {/* 主体：chat / file tab / pending diff tab */}
       {activeTab === 'chat' || !openFiles.includes(activeTab) ? (
         <>
           <MessageList conversationId={conv.id} />
+          <PendingWritesPanel conversationId={conv.id} />
           <MessageInput conversationId={conv.id} />
         </>
+      ) : isDiffTabId(activeTab) ? (
+        <PendingWriteDiffTab conversationId={conv.id} pendingId={diffTabPendingId(activeTab)} />
       ) : (
         <FileTab conversationId={conv.id} relPath={activeTab} />
       )}
@@ -189,13 +226,17 @@ export function ChatPanel() {
 function TabButton({
   label,
   tooltip,
+  icon,
   active,
+  highlight,
   onClick,
   onClose,
 }: {
   label: string
   tooltip?: string
+  icon?: React.ReactNode
   active: boolean
+  highlight?: boolean
   onClick: () => void
   onClose?: () => void
 }) {
@@ -205,10 +246,13 @@ function TabButton({
       className={cn(
         'group flex shrink-0 items-center gap-1.5 rounded-md border px-2.5 py-1 transition',
         active
-          ? 'border-primary/30 bg-background shadow-sm'
+          ? highlight
+            ? 'border-[#3370FF]/40 bg-[#3370FF]/5 text-foreground shadow-sm'
+            : 'border-primary/30 bg-background shadow-sm'
           : 'border-transparent text-muted-foreground hover:bg-accent hover:text-foreground',
       )}
     >
+      {icon}
       <button type="button" onClick={onClick} className="max-w-[180px] truncate">
         {label}
       </button>

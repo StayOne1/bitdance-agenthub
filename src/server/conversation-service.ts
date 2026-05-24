@@ -116,6 +116,7 @@ export async function createConversation(args: CreateConversationArgs): Promise<
     agentIds: args.agentIds,
     pinnedMessageIds: [],
     archived: false,
+    fsWriteApprovalMode: 'review',
     createdAt: now,
     updatedAt: now,
     workspaceMode,
@@ -223,6 +224,25 @@ export async function renameConversation(
     .where(eq(schema.conversations.id, conversationId))
 
   return withWorkspaceMeta({ ...conv, title: trimmed, updatedAt: now })
+}
+
+// ─── 设置 fs_write 审批模式 ─────────────────────────────
+export async function setConversationApprovalMode(
+  conversationId: string,
+  mode: 'auto' | 'review',
+): Promise<ConversationWithMeta> {
+  const conv = await db.query.conversations.findFirst({
+    where: eq(schema.conversations.id, conversationId),
+  })
+  if (!conv) throw new Error(`Conversation not found: ${conversationId}`)
+
+  const now = Date.now()
+  await db
+    .update(schema.conversations)
+    .set({ fsWriteApprovalMode: mode, updatedAt: now })
+    .where(eq(schema.conversations.id, conversationId))
+
+  return withWorkspaceMeta({ ...conv, fsWriteApprovalMode: mode, updatedAt: now })
 }
 
 // ─── 添加 Agent 到现有会话 ──────────────────────────────

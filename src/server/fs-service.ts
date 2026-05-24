@@ -39,6 +39,23 @@ export async function getWorkspaceForConversation(
   return row ?? null
 }
 
+/**
+ * 读 workspace 内某个文件，文件不存在返回 null。
+ * 用于 fs_write review 模式：拿到 oldContent 给前端 diff viewer。
+ */
+export function readIfExists(workspace: WorkspaceRow, target: string): string | null {
+  try {
+    const absPath = assertPathWithinWorkspace(workspace, target)
+    if (!existsSync(absPath)) return null
+    const stat = statSync(absPath)
+    if (!stat.isFile()) return null
+    if (stat.size > MAX_READ_BYTES) return null // 太大不 diff
+    return readFileSync(absPath, 'utf8')
+  } catch {
+    return null
+  }
+}
+
 // ─── 读文件 ─────────────────────────────────────────────
 export interface ReadResult {
   path: string

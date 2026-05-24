@@ -6,6 +6,7 @@ import type {
   ConversationWithMeta,
   MessageRow,
 } from '@/db/schema'
+import type { PendingWrite } from '@/shared/types'
 
 export interface ArtifactListItem {
   id: string
@@ -135,6 +136,54 @@ export async function renameConversation(
     }),
   )
   return conversation
+}
+
+export async function setFsWriteApprovalMode(
+  conversationId: string,
+  mode: 'auto' | 'review',
+): Promise<ConversationWithMeta> {
+  const { conversation } = await json<{ conversation: ConversationWithMeta }>(
+    fetch(`/api/conversations/${conversationId}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ fsWriteApprovalMode: mode }),
+    }),
+  )
+  return conversation
+}
+
+// ─── Pending writes (fs_write review mode) ─────
+export async function fetchPendingWrites(conversationId: string): Promise<PendingWrite[]> {
+  const { pendingWrites } = await json<{ pendingWrites: PendingWrite[] }>(
+    fetch(`/api/conversations/${conversationId}/pending-writes`),
+  )
+  return pendingWrites
+}
+
+export async function approvePendingWrite(
+  conversationId: string,
+  pendingId: string,
+): Promise<void> {
+  await json<{ ok: true }>(
+    fetch(`/api/conversations/${conversationId}/pending-writes/${pendingId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'approve' }),
+    }),
+  )
+}
+
+export async function rejectPendingWrite(
+  conversationId: string,
+  pendingId: string,
+): Promise<void> {
+  await json<{ ok: true }>(
+    fetch(`/api/conversations/${conversationId}/pending-writes/${pendingId}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ action: 'reject' }),
+    }),
+  )
 }
 
 // ─── Messages ───────────────────────────────────

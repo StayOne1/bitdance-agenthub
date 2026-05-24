@@ -38,7 +38,7 @@ L3  Application Services（见 Spec 02/06）
 ```typescript
 interface AppState {
   // ─── 实体 maps ─────────────────────────────────────
-  conversations: Record<string, ConversationRow>
+  conversations: Record<string, ConversationWithMeta>  // 含 workspaceMode / workspaceBoundPath
   agents: Record<string, AgentRow>
   messages: Record<string, MessageRow>
   artifacts: Record<string, ArtifactRow>
@@ -53,8 +53,12 @@ interface AppState {
   // ─── UI 状态 ──────────────────────────────────────
   activeConversationId: string | null
   previewArtifactId: string | null
+  fileExplorerOpen: boolean                                   // 与 previewArtifactId 互斥
+  openFilesByConv: Record<string, string[]>                  // 中间区 tab 列表（含 'diff:<pwId>' 形式）
+  activeTabByConv: Record<string, string>                    // 当前激活 tab：'chat' / 文件路径 / 'diff:<pwId>'
   replyTargetByConv: Record<string, string | null>           // 引用回复目标
   pendingAttachmentsByConv: Record<string, AttachmentRow[]>  // 待发送附件
+  pendingWritesByConv: Record<string, PendingWrite[]>        // Agent fs_write 审批队列（review 模式）
   highlightedMessageId: string | null                         // 跳转后短暂高亮
   streamConnected: boolean
 }
@@ -91,6 +95,8 @@ interface AppState {
 | `dispatch.plan` | 找该 runId 最新的 agent 消息作挂载点，创建 `DispatchState` |
 | `dispatch.start` | `taskStatus[taskId] = 'running'`，记 `childRunIds[taskId] = childRunId` |
 | `dispatch.end` | 通过 `childRunId` 反查 `dispatchesByRunId`，更新 `taskStatus[taskId]` |
+| `fs_write.pending` | `pendingWritesByConv[convId].push(pendingWrite)`（已存在的 id 不重复 push） |
+| `fs_write.resolved` | 从 `pendingWritesByConv[convId]` 移除 `pendingId`；ChatPanel 的清理 effect 会同步关掉对应 `diff:<pwId>` tab |
 
 **幂等性**：`message.start` / `run.start` 在 id 已存在时仍 idempotent（覆盖写）；`messageIdsByConv` 用 `includes` 检查防重复。这样支持事件重放（未来重连补发）。
 
@@ -186,20 +192,27 @@ app/page.tsx
     │   │   └── <CreateAgentDialog />
     │   └── <RenameInput />       ── 内联重命名
     ├── <ChatPanel />             ── 当前会话主区
-    │   ├── header: 头像堆 + AgentInfoPopover + FileLibraryDialog + AddAgentDialog
-    │   ├── <MessageList>
-    │   │   └── <MessageItem>     ── 每条消息
-    │   │       ├── <AgentInfoPopover />
-    │   │       ├── <QuotedMessage />     ── 引用预览
-    │   │       ├── <PartList>            ── 渲染 message.parts
-    │   │       │   ├── <Markdown />      ── text part
-    │   │       │   ├── <CodeBlock />     ── code part + fenced markdown code
-    │   │       │   ├── <ToolUsePart />   ── 工具卡片（按 callId 合并 tool_use+tool_result）
-    │   │       │   ├── <ThinkingPart />  ── 可折叠思考
-    │   │       │   ├── <ArtifactRefPart /> ── 产物卡片，点击打开预览
-    │   │       │   └── <AttachmentChip />  ── 附件
-    │   │       └── <DispatchPlanCard />  ── 调度卡片（Orchestrator）
-    │   └── <MessageInput>        ── @mention popup + 附件 + 引用回复
+    │   ├── header: 头像堆 + AgentInfoPopover + 文件树/产物预览 toggle + FileLibraryDialog + AddAgentDialog
+    │   ├── tab bar（openFiles 非空时显示）: 「对话」+ 每个打开的文件 / diff tab
+    │   ├── 主体（按 activeTab 切换）:
+    │   │   ├── activeTab === 'chat': <MessageList> + <PendingWritesPanel> + <MessageInput>
+    │   │   │   ├── <MessageItem>     ── 每条消息
+    │   │   │   │   ├── <AgentInfoPopover />
+    │   │   │   │   ├── <QuotedMessage />     ── 引用预览
+    │   │   │   │   ├── <PartList>            ── 渲染 message.parts
+    │   │   │   │   │   ├── <Markdown />      ── text part
+    │   │   │   │   │   ├── <CodeBlock />     ── code part + fenced markdown code
+    │   │   │   │   │   ├── <ToolUsePart />   ── 工具卡片（按 callId 合并 tool_use+tool_result）
+    │   │   │   │   │   ├── <ThinkingPart />  ── 可折叠思考
+    │   │   │   │   │   ├── <ArtifactRefPart /> ── 产物卡片，点击打开预览
+    │   │   │   │   │   └── <AttachmentChip />  ── 附件
+    │   │   │   │   └── <DispatchPlanCard />  ── 调度卡片（Orchestrator）
+    │   │   │   ├── <PendingWritesPanel>    ── 输入框上方的待审批列表（每条是 PendingWriteCard，含「查看更改」打 diff tab + 应用/拒绝）
+    │   │   │   └── <MessageInput>          ── @mention popup + 附件 + 引用回复 + Auto/Review 切换
+    │   │   ├── isDiffTabId(activeTab): <PendingWriteDiffTab>   ── 中间区的 fs_write 审批 diff（react-diff-viewer-continued）
+    │   │   └── 否则: <FileTab>            ── 文件浏览 / 编辑
+    │   └── <PendingWriteApprovalDialog> 已废弃 —— 由 PendingWritesPanel + PendingWriteDiffTab 取代
+    ├── <FileExplorerPanel />     ── 右侧文件树（与 ArtifactPreviewPanel 互斥）
     └── <ArtifactPreviewPanel />  ── 右侧产物预览（按 type 分发：web_app/document/image/code_file/diff）
 
 <StreamProvider>                  ── 顶层 layout，全局 SSE 接入

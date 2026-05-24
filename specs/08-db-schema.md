@@ -52,14 +52,15 @@ agents {
 
 ```ts
 conversations {
-  id                  text PK           // conv_<nanoid>
-  title               text NOT NULL
-  mode                text NOT NULL     // 'single'|'group'
-  agent_ids           text JSON         // string[]
-  pinned_message_ids  text JSON         // string[]，default '[]'
-  archived            int  bool default 0
-  created_at          int  NOT NULL
-  updated_at          int  NOT NULL
+  id                       text PK           // conv_<nanoid>
+  title                    text NOT NULL
+  mode                     text NOT NULL     // 'single'|'group'
+  agent_ids                text JSON         // string[]
+  pinned_message_ids       text JSON         // string[]，default '[]'
+  archived                 int  bool default 0
+  fs_write_approval_mode   text NOT NULL default 'review'  // 'auto'|'review'，agent fs_write 审批策略
+  created_at               int  NOT NULL
+  updated_at               int  NOT NULL
 }
 INDEX idx_conv_updated ON (updated_at)
 ```
@@ -67,6 +68,7 @@ INDEX idx_conv_updated ON (updated_at)
 **约束**：
 - `mode='single'` 时 `agent_ids.length === 1`，`group` 时 `>= 2`
 - 群聊里 `is_orchestrator=1` 的 agent 最多 1 个（service 层 enforce）
+- `fs_write_approval_mode`：详见 Spec 07「fs_write 审批模式」。人手编辑文件不走审批，只控制 agent
 
 **索引说明**：`idx_conv_updated` 用于侧边栏「按最近活跃排序」列表。
 

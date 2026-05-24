@@ -88,6 +88,25 @@ export interface DispatchPlanItem {
   dependsOn?: string[]
 }
 
+// ─── Agent 写文件审批 ─────────────────────────────────────
+/**
+ * Agent 调 fs_write 在 review 模式下产出的「待审批」记录。后端持有 promise，
+ * 前端展示 diff 让用户决定 approve / reject。详见 specs/07-tools.md fs_write 一节。
+ */
+export interface PendingWrite {
+  id: string                  // pwr_<nanoid>
+  conversationId: string
+  agentId: string
+  runId: string
+  /** 相对 workspace 的路径 */
+  path: string
+  absolutePath: string
+  /** null = 新建文件 */
+  oldContent: string | null
+  newContent: string
+  createdAt: number
+}
+
 // ─── StreamEvent 联合 ─────────────────────────────────────
 interface BaseEvent {
   conversationId: string
@@ -110,6 +129,8 @@ export type StreamEvent = BaseEvent &
     | { type: 'dispatch.plan'; runId: string; plan: DispatchPlanItem[] }
     | { type: 'dispatch.start'; parentRunId: string; childRunId: string; taskId: string; agentId: string }
     | { type: 'dispatch.end'; childRunId: string; taskId: string; status: 'complete' | 'failed' }
+    | { type: 'fs_write.pending'; pendingWrite: PendingWrite }
+    | { type: 'fs_write.resolved'; pendingId: string; applied: boolean }
     | { type: 'heartbeat' }
   )
 

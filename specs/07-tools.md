@@ -166,7 +166,26 @@ export const toolRegistry = buildRegistry()
 - **sandbox 模式**额外检查 workspace 总量：累计 size > 100 MB 或文件数 > 1000 拒（递归扫 `rootPath`）
 - **local 模式**跳过总量检查（用户自管理）
 
-**返回**：`{ path, absolutePath, cwd, bytes }`
+**返回**：`{ path, absolutePath, cwd, bytes, applied: 'auto' | 'review' }`。`applied` 标识用户审批路径还是直接写。
+
+#### fs_write 审批模式
+
+人手编辑（FileTab 内自己改保存）**不走审批** —— 用户改自己的代码不需要审批自己。
+**Agent** 调 `fs_write` 才走审批，由 `conversation.fsWriteApprovalMode` 决定：
+
+- `'auto'`：直接写，工具立即返回 `applied: 'auto'`。适合反复改、信任度高的场景
+- `'review'`（默认）：注册 PendingWrite，发 `fs_write.pending` SSE，前端弹 `PendingWriteApprovalDialog`
+  显示 `react-diff-viewer-continued` 双栏 diff。用户决定后：
+  - **应用** → handler 调 `writeFileInWorkspace` 真写盘，发 `fs_write.resolved { applied: true }`，工具返回 `applied: 'review'`
+  - **拒绝** → 不写盘，发 `fs_write.resolved { applied: false }`，工具返回 `{ ok: false, error: 'User rejected the file change' }`
+  - **run abort** → 静默取消（不发 SSE），工具返回 rejected
+
+实现细节：
+- `pendingWrites` 是模块级单例（HMR-safe via globalThis），见 `src/server/pending-writes.ts`
+- handler 注册后 `await new Promise(resolve => pendingWrites.attachResolver(id, resolve))` 阻塞，直到 approve / reject / abort 触发 resolver
+- pending 队列**纯内存**，dev server 重启即丢失。前端 `PendingWriteApprovalDialog` mount 时 `GET /api/conversations/[id]/pending-writes` 拉一次兜底（处理刷新场景）
+
+切换模式：`PATCH /api/conversations/[id]` body `{ fsWriteApprovalMode: 'auto' | 'review' }`。Chat panel header 有 Shield/Zap 图标 toggle 按钮。
 
 ### bash
 

@@ -50,6 +50,16 @@ export const conversations = sqliteTable(
       .default(sql`'[]'`),
     archived: integer('archived', { mode: 'boolean' }).notNull().default(false),
 
+    /**
+     * Agent 通过 fs_write 改文件时的审批策略：
+     * 'review' — 写入前推送 fs_write.pending，让前端弹审批 dialog（默认）
+     * 'auto'   — 直接写
+     * 仅影响 agent；用户手动在 FileTab 编辑保存不走审批。
+     */
+    fsWriteApprovalMode: text('fs_write_approval_mode', { enum: ['auto', 'review'] })
+      .notNull()
+      .default('review'),
+
     createdAt: integer('created_at').notNull(),
     updatedAt: integer('updated_at').notNull(),
   },

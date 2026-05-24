@@ -49,9 +49,25 @@ type StreamEvent = BaseEvent & (
   | { type: 'dispatch.start', parentRunId: string, childRunId: string, taskId: string, agentId: string }
   | { type: 'dispatch.end',   childRunId: string, taskId: string, status: 'complete' | 'failed' }
 
+  // —— Agent fs_write 审批（仅 review 模式发；详见 Spec 07） ——
+  | { type: 'fs_write.pending',  pendingWrite: PendingWrite }       // agent 调 fs_write，等用户审批
+  | { type: 'fs_write.resolved', pendingId: string, applied: boolean } // approve / reject / run abort
+
   // —— 心跳 ——
   | { type: 'heartbeat' }
 )
+
+interface PendingWrite {
+  id: string                    // pwr_<nanoid>
+  conversationId: string
+  agentId: string
+  runId: string
+  path: string                  // workspace 相对路径
+  absolutePath: string
+  oldContent: string | null     // null 表示新建文件
+  newContent: string
+  createdAt: number
+}
 
 interface DispatchPlanItem {
   id: string                    // 子任务 id，如 't1'
@@ -164,6 +180,8 @@ run.end           (r1, 'complete')
 | `tool.result` | ✅ 写为 message.parts 里的 tool_result part | |
 | `artifact.*` | ✅ 落到 `artifacts` 表 | |
 | `dispatch.*` | ❌ 透传（信息来自 plan_tasks 工具调用 + agent_runs 表） | |
+| `fs_write.pending` | ❌ 透传 | pending 队列存于内存单例（`src/server/pending-writes.ts`）；dev server 重启丢失，前端 mount 时拉一次兜底 |
+| `fs_write.resolved` | ❌ 透传 | applied=true/false 由前端 store 用来移除对应 pending |
 | `heartbeat` | ❌ 透传 | |
 
 **写入策略**：流式 `part.delta` 高频，使用「内存缓冲 + 定时 flush」避免每个 delta 都打 DB：

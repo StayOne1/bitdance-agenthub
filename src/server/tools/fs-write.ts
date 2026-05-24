@@ -1,6 +1,14 @@
+import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 
-import { getWorkspaceForConversation, writeFileInWorkspace } from '@/server/fs-service'
+import { db, schema } from '@/db/client'
+import {
+  getWorkspaceForConversation,
+  readIfExists,
+  writeFileInWorkspace,
+} from '@/server/fs-service'
+import { pendingWrites } from '@/server/pending-writes'
+import { assertPathWithinWorkspace } from '@/server/workspace-utils'
 
 import type { ToolDef } from './types'
 
@@ -12,14 +20,17 @@ const ArgsSchema = z.object({
 /**
  * fs_write —— 在 workspace 内写文件。
  *
- * 路径走 assertPathWithinWorkspace 沙箱；父目录自动 mkdir -p；
- * 单文件大小 100 KB 上限；sandbox 模式额外检查 workspace 总量配额，
- * local 模式不限（用户管理自己的目录）。
+ * 行为按 conversation.fsWriteApprovalMode 分支：
+ *  - 'auto'   : 直接写
+ *  - 'review' : 注册 pendingWrite，发 fs_write.pending 事件让前端弹审批 dialog，
+ *               等用户 approve / reject（或 run abort）才决定真写还是放弃
+ *
+ * 详见 specs/07-tools.md 「fs_write 审批模式」一节。
  */
 export const fsWriteTool: ToolDef = {
   name: 'fs_write',
   description:
-    "Write a UTF-8 text file inside the workspace. Path can be relative (resolved against the workspace root) or absolute (must still be inside the workspace). Parent directories are created automatically. Each file is capped at 100 KB; in sandbox mode the workspace as a whole is capped at 100 MB / 1000 files. Use this to scaffold code, write documents, etc.",
+    "Write a UTF-8 text file inside the workspace. Path can be relative (resolved against the workspace root) or absolute (must still be inside the workspace). Parent directories are created automatically. Each file is capped at 100 KB; in sandbox mode the workspace as a whole is capped at 100 MB / 1000 files. In 'review' mode the user must approve the diff before the write actually happens; you'll see ok:false with 'rejected' if they decline. Use this to scaffold code, write documents, etc.",
   parameters: {
     type: 'object',
     required: ['path', 'content'],
@@ -43,11 +54,66 @@ export const fsWriteTool: ToolDef = {
     const workspace = await getWorkspaceForConversation(ctx.conversationId)
     if (!workspace) return { ok: false, error: 'Workspace not found' }
 
+    const conv = await db.query.conversations.findFirst({
+      where: eq(schema.conversations.id, ctx.conversationId),
+    })
+    const mode = conv?.fsWriteApprovalMode ?? 'review'
+
+    // Auto 模式：直接写
+    if (mode === 'auto') {
+      try {
+        const result = writeFileInWorkspace(workspace, parsed.data.path, parsed.data.content)
+        return { ok: true, value: { ...result, applied: 'auto' as const } }
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) }
+      }
+    }
+
+    // Review 模式：注册 pending 并等用户响应
+    let absPath: string
     try {
-      const result = writeFileInWorkspace(workspace, parsed.data.path, parsed.data.content)
-      return { ok: true, value: result }
+      absPath = assertPathWithinWorkspace(workspace, parsed.data.path)
     } catch (err) {
       return { ok: false, error: err instanceof Error ? err.message : String(err) }
+    }
+
+    const pending = pendingWrites.register({
+      conversationId: ctx.conversationId,
+      agentId: ctx.agentId,
+      runId: ctx.runId,
+      path: parsed.data.path,
+      absolutePath: absPath,
+      oldContent: readIfExists(workspace, parsed.data.path),
+      newContent: parsed.data.content,
+      workspace,
+    })
+
+    const decision = await new Promise<{ applied: boolean }>((resolve) => {
+      pendingWrites.attachResolver(pending.id, resolve)
+      // Run abort → pending 也取消
+      const onAbort = () => {
+        pendingWrites.cancel(pending.id)
+        resolve({ applied: false })
+      }
+      if (ctx.abortSignal.aborted) {
+        onAbort()
+      } else {
+        ctx.abortSignal.addEventListener('abort', onAbort, { once: true })
+      }
+    })
+
+    if (!decision.applied) {
+      return { ok: false, error: 'User rejected the file change' }
+    }
+
+    return {
+      ok: true,
+      value: {
+        path: parsed.data.path,
+        absolutePath: absPath,
+        bytes: Buffer.byteLength(parsed.data.content, 'utf8'),
+        applied: 'review' as const,
+      },
     }
   },
 }

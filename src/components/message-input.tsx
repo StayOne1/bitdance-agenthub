@@ -1,6 +1,6 @@
 'use client'
 
-import { Paperclip, Send, Square, X } from 'lucide-react'
+import { Paperclip, Send, Shield, Square, X, Zap } from 'lucide-react'
 import { nanoid } from 'nanoid'
 import { useEffect, useMemo, useRef, useState } from 'react'
 
@@ -13,6 +13,7 @@ import type { AgentRow, AttachmentRow } from '@/db/schema'
 import {
   abortRun,
   sendMessage as sendMessageAPI,
+  setFsWriteApprovalMode,
   uploadAttachment as uploadAttachmentAPI,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
@@ -38,6 +39,7 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   const addLocalUserMessage = useAppStore((s) => s.addLocalUserMessage)
   const replaceLocalMessageId = useAppStore((s) => s.replaceLocalMessageId)
   const conversation = useAppStore((s) => s.conversations[conversationId])
+  const upsertConversation = useAppStore((s) => s.upsertConversation)
   const agents = useAppStore((s) => s.agents)
   const runningRuns = useTopLevelRunningRuns(conversationId)
   const isRunning = runningRuns.length > 0
@@ -45,6 +47,7 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
   const addPendingAttachment = useAppStore((s) => s.addPendingAttachment)
   const removePendingAttachment = useAppStore((s) => s.removePendingAttachment)
   const clearPendingAttachments = useAppStore((s) => s.clearPendingAttachments)
+  const [modeBusy, setModeBusy] = useState(false)
 
   // 引用回复目标
   const replyTargetId = useAppStore((s) => s.replyTargetByConv[conversationId])
@@ -248,6 +251,21 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
     }
   }
 
+  const approvalMode = conversation?.fsWriteApprovalMode ?? 'review'
+  const toggleApprovalMode = async () => {
+    if (modeBusy || !conversation) return
+    const nextMode = approvalMode === 'review' ? 'auto' : 'review'
+    setModeBusy(true)
+    try {
+      const updated = await setFsWriteApprovalMode(conversationId, nextMode)
+      upsertConversation(updated)
+    } catch (err) {
+      console.error('[MessageInput] toggle approval mode failed', err)
+    } finally {
+      setModeBusy(false)
+    }
+  }
+
   return (
     <div className="relative shrink-0 border-t bg-background p-3">
       {/* 引用预览 */}
@@ -339,7 +357,7 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
         </div>
       )}
 
-      <div className="flex items-end gap-2">
+      <div className="flex items-center gap-2">
         <Textarea
           ref={textareaRef}
           value={content}
@@ -368,16 +386,43 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
             e.target.value = '' // 允许同名文件再次选择
           }}
         />
-        <Button
-          type="button"
-          size="icon"
-          variant="ghost"
-          onClick={() => fileInputRef.current?.click()}
-          disabled={isRunning}
-          title="附件 / 图片"
-        >
-          <Paperclip className="size-4" />
-        </Button>
+        {/* 辅助按钮组（紧贴）—— 让 Paperclip + 审批模式视觉成一组，与右侧主操作按钮 send 区分 */}
+        <div className="flex items-center">
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={isRunning}
+            title="附件 / 图片"
+          >
+            <Paperclip className="size-4" />
+          </Button>
+          {/* fs_write 审批模式开关：绿色 = Review（默认安全），红色 = Auto（直写） */}
+          <Button
+            type="button"
+            size="icon"
+            variant="ghost"
+            onClick={() => void toggleApprovalMode()}
+            disabled={modeBusy}
+            title={
+              approvalMode === 'review'
+                ? 'Review 模式 · Agent 写入需审批（点击切到 Auto，直接生效 ⚠）'
+                : '⚠ Auto 模式 · Agent 写入直接生效（点击切回 Review）'
+            }
+            className={cn(
+              approvalMode === 'review'
+                ? 'text-emerald-600 hover:text-emerald-700 dark:text-emerald-400'
+                : 'text-[#FE3B25] hover:text-[#FE3B25] dark:text-[#FE3B25]',
+            )}
+          >
+            {approvalMode === 'review' ? (
+              <Shield className="size-4" />
+            ) : (
+              <Zap className="size-4" />
+            )}
+          </Button>
+        </div>
         {isRunning ? (
           <Button
             onClick={() => void abortAll()}

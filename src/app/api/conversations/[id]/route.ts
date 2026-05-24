@@ -5,6 +5,7 @@ import {
   addAgentsToConversation,
   deleteConversation,
   renameConversation,
+  setConversationApprovalMode,
 } from '@/server/conversation-service'
 
 interface RouteContext {
@@ -26,10 +27,15 @@ const PatchBody = z
   .object({
     addAgentIds: z.array(z.string()).min(1).optional(),
     title: z.string().min(1).max(100).optional(),
+    fsWriteApprovalMode: z.enum(['auto', 'review']).optional(),
   })
-  .refine((d) => d.addAgentIds !== undefined || d.title !== undefined, {
-    message: 'Either addAgentIds or title is required',
-  })
+  .refine(
+    (d) =>
+      d.addAgentIds !== undefined ||
+      d.title !== undefined ||
+      d.fsWriteApprovalMode !== undefined,
+    { message: 'At least one of addAgentIds / title / fsWriteApprovalMode is required' },
+  )
 
 export async function PATCH(req: NextRequest, ctx: RouteContext) {
   const { id } = await ctx.params
@@ -49,6 +55,9 @@ export async function PATCH(req: NextRequest, ctx: RouteContext) {
         conversationId: id,
         agentIds: parsed.data.addAgentIds,
       })
+    }
+    if (parsed.data.fsWriteApprovalMode !== undefined) {
+      conversation = await setConversationApprovalMode(id, parsed.data.fsWriteApprovalMode)
     }
     return NextResponse.json({ conversation })
   } catch (err) {

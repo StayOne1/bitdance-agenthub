@@ -11,3 +11,4 @@ export const newWorkspaceId = () => `ws_${nano()}`
 export const newRunId = () => `run_${nano()}`
 export const newToolCallId = () => `call_${nano()}`
 export const newAttachmentId = () => `att_${nano()}`
+export const newPendingWriteId = () => `pwr_${nano()}`
