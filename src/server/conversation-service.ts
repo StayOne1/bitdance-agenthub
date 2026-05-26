@@ -1,4 +1,5 @@
-import { accessSync, constants, mkdirSync, rmSync, statSync } from 'node:fs'
+import { accessSync, constants, mkdirSync, statSync } from 'node:fs'
+import { rm as fsRm } from 'node:fs/promises'
 import path from 'node:path'
 
 import { and, desc, eq, gt, gte, inArray } from 'drizzle-orm'
@@ -18,6 +19,24 @@ import {
 import { isPathSafe } from './workspace-utils'
 
 const WORKSPACES_ROOT = path.resolve(process.cwd(), '.agenthub-data', 'workspaces')
+
+/**
+ * 删除 workspace 目录。Windows 上 EBUSY/EPERM/ENOTEMPTY 走指数退避（详见 specs/11-platform.md）：
+ * 进程占用、AV 扫描、`.git/index.lock` 残留等场景下，重试 3 次（100/300/900ms）多数能成功。
+ */
+async function rmDirWithRetry(target: string): Promise<void> {
+  const RETRYABLE = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY'])
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await fsRm(target, { recursive: true, force: true })
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? ''
+      if (!RETRYABLE.has(code) || attempt === 3) throw err
+      await new Promise((r) => setTimeout(r, 100 * Math.pow(3, attempt - 1)))
+    }
+  }
+}
 
 // ─── 创建会话 ────────────────────────────────────────────
 export interface CreateConversationArgs {
@@ -230,7 +249,7 @@ export async function deleteConversation(conversationId: string): Promise<void> 
   // 物理删 workspace 目录（不影响 DB 事务，容错）
   if (workspace) {
     try {
-      rmSync(workspace.rootPath, { recursive: true, force: true })
+      await rmDirWithRetry(workspace.rootPath)
     } catch (err) {
       console.warn(`[deleteConversation] failed to remove workspace dir ${workspace.rootPath}`, err)
     }

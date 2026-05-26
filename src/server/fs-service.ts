@@ -3,6 +3,7 @@ import {
   mkdirSync,
   readFileSync,
   readdirSync,
+  realpathSync,
   statSync,
   writeFileSync,
 } from 'node:fs'
@@ -185,9 +186,19 @@ function scanWorkspaceUsage(rootPath: string): { bytes: number; files: number } 
   let bytes = 0
   let files = 0
   if (!existsSync(rootPath)) return { bytes, files }
+  // 用 realpath 防 symlink / junction 循环（Windows mklink /J 与 POSIX ln -s 同样会形成 cycle，详见 specs/11-platform.md）
+  const visited = new Set<string>()
   const stack: string[] = [rootPath]
   while (stack.length > 0) {
     const dir = stack.pop()!
+    let real: string
+    try {
+      real = realpathSync(dir)
+    } catch {
+      continue
+    }
+    if (visited.has(real)) continue
+    visited.add(real)
     let entries
     try {
       entries = readdirSync(dir, { withFileTypes: true })

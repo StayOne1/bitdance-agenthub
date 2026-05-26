@@ -243,16 +243,58 @@ Drives 列表通过 `statSync('A:\\')` … `statSync('Z:\\')` 探测可用盘符
 
 ---
 
-## 不在本 spec 范围内（留给 Phase 3）
+## Workspace 清理重试
 
-- 编码细节（除 `[Console]::OutputEncoding` 之外的回退路径，如 iconv-lite）
-- workspace 清理的 EBUSY 重试
-- symlink / reparse point 循环防护
-- Long path（>260）支持
+`conversation-service.ts` 的 `rmSync(workspace.rootPath, { recursive: true, force: true })` 在 Windows 经常抛 `EBUSY` / `EPERM` / `ENOTEMPTY`：
+
+- 文件被进程占用（dev server / git）
+- Antivirus 实时扫描时 hold handle
+- `.git/index.lock` 类残留锁文件
+
+实现：用 `fs/promises.rm` + 指数退避重试，100ms / 300ms / 900ms，3 次后仍失败才放弃（仅 `console.warn`，不上报 DB —— workspace 目录残留不影响逻辑正确性，下次清理或手动删即可）。
+
+```typescript
+async function rmDirWithRetry(target: string): Promise<void> {
+  const RETRYABLE = new Set(['EBUSY', 'EPERM', 'ENOTEMPTY'])
+  for (let attempt = 1; attempt <= 3; attempt++) {
+    try {
+      await fsp.rm(target, { recursive: true, force: true })
+      return
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code ?? ''
+      if (!RETRYABLE.has(code) || attempt === 3) throw err
+      await new Promise((r) => setTimeout(r, 100 * Math.pow(3, attempt - 1)))
+    }
+  }
+}
+```
 
 ---
 
-## 验证清单（Phase 1 + Phase 2 合并前）
+## 递归扫描的 symlink/junction 防护
+
+`fs-service.ts` 的 `scanWorkspaceUsage` 用栈递归遍历 workspace 算大小 / 文件数（fs_write 配额）。
+
+- POSIX 上 `ln -s` symlink 可能引入循环
+- Windows 上 `mklink /J` junction 与 `mklink /D` 目录 symlink 都是 reparse point，同样会循环
+
+实现：访问每个目录前 `realpathSync(dir)`，记录到 `Set<string>`，重复 realpath 直接跳过。
+
+**Why 不在 fs_read/fs_write 工具层做**：那两个是单文件操作，没有递归；`scanWorkspaceUsage` 是唯一的递归路径。
+
+---
+
+## 故意不做的事
+
+| 项目 | 不做的理由 |
+|---|---|
+| **iconv-lite 编码 fallback** | PowerShell `[Console]::OutputEncoding = UTF8` 已覆盖实测场景；引入新依赖按 CLAUDE.md §6.2 要先讨论。等到真有 native exe 输出无视 PS encoding 的命令再加 |
+| **Long path（>260）`\\?\` 前缀注入** | Win10 1607+ 默认支持长路径（需要 group policy + manifest），Node 24 内部已处理；实测踩坑再加 |
+| **`SIGTERM → SIGKILL` 升级（POSIX）** | 现状 30s 超时直接 SIGTERM，未升级 SIGKILL。Phase 1 验证下来没有「kill 不掉」的命令；遇到再补 |
+
+---
+
+## 验证清单（Phase 1 + Phase 2 + Phase 3 合并前）
 
 **Phase 1**：
 - [ ] macOS：现有 bash 工具调用行为不变（回归 `ls`、`git status`、`npm test`）
@@ -269,6 +311,11 @@ Drives 列表通过 `statSync('A:\\')` … `statSync('Z:\\')` 探测可用盘符
 - [ ] Windows：输入框 placeholder 显示 `D:\projects\foo` 而非 `/Users/me/projects/foo`
 - [ ] Windows：路径大小写不敏感（`C:\Users\Foo` 与 `c:\users\foo` 互通）
 - [ ] Windows：boundPath 输入 `/tmp` 被拒（POSIX 风格在 Windows 上无意义）
+
+**Phase 3**：
+- [ ] Windows：删除一个文件被 dev server 占用的会话，workspace 删除会重试 3 次后才放弃
+- [ ] Windows：在 workspace 内 `mklink /J loop .` 创建 junction 循环，`scanWorkspaceUsage` 不死循环
+- [ ] POSIX：在 workspace 内 `ln -s . loop` 创建 symlink 循环，`scanWorkspaceUsage` 不死循环
 
 ---
 
