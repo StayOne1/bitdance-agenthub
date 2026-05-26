@@ -196,13 +196,19 @@ export const toolRegistry = buildRegistry()
 **参数**：`{ command: string }`。
 
 **流程**：
-1. 命中 CLAUDE.md §5.2 黑名单（`rm -rf /` / `sudo` / `chmod ... /` / fork bomb / `curl|sh` / `wget|sh` / `eval` / `exec`）→ 拒
-2. `child_process.spawn(shell.cmd, shell.args(command), { cwd: getEffectiveCwd(workspace) })`
-   - 跨平台：`getShell()` macOS/Linux 返回 `{ cmd: 'sh', args: c => ['-c', c] }`，Windows 返回 `{ cmd: 'cmd.exe', args: c => ['/c', c] }`（本轮只验证 macOS/Linux，Windows 标记 P2）
+1. 命中 `getBannedPatterns(currentPlatform())` 黑名单（POSIX / Windows 各一套，详见 Spec 11）→ 拒
+2. `child_process.spawn(shell.cmd, shell.args(command), { cwd: getEffectiveCwd(workspace), windowsHide: true })`
+   - 跨平台 shell（详见 Spec 11 「Shell 选择」节）：
+     - POSIX：`sh -c <command>`
+     - Windows：`powershell.exe -NoProfile -NonInteractive -Command "chcp 65001 > $null; <command>"`（用系统自带 PS 5.1，chcp 65001 强制 UTF-8 输出）
 3. stdout + stderr 合并截断 **10000 字符**
-4. **30s 超时**：`setTimeout → child.kill('SIGTERM')`
-5. `ctx.abortSignal` 触发同样 kill
+4. **30s 超时**：进程清理走 `killProcessTree`
+   - POSIX：`child.kill('SIGTERM')`
+   - Windows：`taskkill /F /T /PID <pid>` 递归杀进程树（Node 的 SIGTERM 在 Windows 杀不到孙子进程）
+5. `ctx.abortSignal` 触发同样的 `killProcessTree`
 6. **不支持** stdin / 环境变量定制 / pty / TUI
+
+**工具 description 按平台变体**（详见 Spec 11 「工具描述按平台变体」节）：description 字段在模块加载时根据 `currentPlatform()` 拼接，POSIX 展示 sh 示例与 POSIX 黑名单文案，Windows 展示 PowerShell 示例与 Windows 黑名单文案。这是 LLM 选择命令语法的关键提示。
 
 **返回**：`{ cwd, command, exitCode, output, truncated, timedOut }`
 
@@ -289,10 +295,10 @@ LLM 决定调用 →  Adapter emit  tool.call (StreamEvent)
 
 - **路径解析后落在 `ctx.workspacePath` 子树内**（用 `path.resolve` + `startsWith` 检查）
 - **bash cwd 强制为 `ctx.workspacePath`**
-- **bash 命令前匹配 CLAUDE.md §5.2 黑名单**（rm -rf /、sudo、fork bomb、curl pipe shell 等）
+- **bash 命令前匹配双平台黑名单**（详见 Spec 11；POSIX：rm -rf /、sudo、fork bomb、curl pipe shell 等；Windows：Remove-Item -Recurse -Force、format、shutdown、iex(iwr ...)、reg delete 等）
 - **不引入新依赖而不在 PR 中说明**（CLAUDE.md §4.3）
 
-**`BANNED_PATTERNS` 跨 adapter / 工具共享**：定义在 `src/server/security.ts`，由 `findBannedPattern(command)` 暴露。`bash` 工具和 `ClaudeCodeAdapter`（用 SDK Bash 工具时）都走同一份名单，新增模式同步 CLAUDE.md §5.2 并只改 `security.ts` 这一处。
+**`getBannedPatterns(platform)` 跨 adapter / 工具共享**：定义在 `src/server/security.ts`，由 `findBannedPattern(command, platform?)` 暴露（platform 省略时取 `currentPlatform()`）。`bash` 工具和 `ClaudeCodeAdapter`（用 SDK Bash 工具时）都走同一份名单，新增模式同步 Spec 11 「命令黑名单」节并只改 `security.ts` 这一处。
 
 **TODO 工具（CLAUDE.md 提到但仍未实装）**：
 

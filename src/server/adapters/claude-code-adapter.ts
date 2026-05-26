@@ -461,18 +461,23 @@ function buildSdkEnv(
   apiKey: string | null,
   apiBaseUrl: string | null,
 ): Record<string, string | undefined> {
+  const base: Record<string, string | undefined> = { ...process.env }
+  // Windows 上 Claude Code SDK 内部可能查 $HOME 而非 %USERPROFILE%，兜底一下。
+  if (process.platform === 'win32' && !base.HOME) {
+    base.HOME = base.USERPROFILE
+  }
   if (apiBaseUrl) {
     return {
-      ...process.env,
+      ...base,
       ANTHROPIC_BASE_URL: apiBaseUrl,
       ANTHROPIC_AUTH_TOKEN: apiKey ?? '',
       ANTHROPIC_API_KEY: '',
     }
   }
   if (apiKey) {
-    return { ...process.env, ANTHROPIC_API_KEY: apiKey }
+    return { ...base, ANTHROPIC_API_KEY: apiKey }
   }
-  return process.env as Record<string, string | undefined>
+  return base
 }
 
 interface PermissionCtx {

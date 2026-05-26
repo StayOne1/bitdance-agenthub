@@ -358,7 +358,7 @@ export async function toggleMessagePin(
 export interface ListDirResult {
   path: string
   parent: string | null
-  entries: Array<{ name: string; isDirectory: boolean }>
+  entries: Array<{ name: string; isDirectory: boolean; path?: string }>
 }
 
 export async function listDirectory(targetPath?: string): Promise<ListDirResult> {

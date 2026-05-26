@@ -1,11 +1,11 @@
-import { spawn } from 'node:child_process'
-import { platform } from 'node:os'
+import { spawn, type ChildProcess } from 'node:child_process'
 
 import { eq } from 'drizzle-orm'
 import { z } from 'zod'
 
 import { db, schema } from '@/db/client'
-import { BANNED_PATTERNS } from '@/server/security'
+import { currentPlatform, type Platform } from '@/server/platform'
+import { findBannedPattern } from '@/server/security'
 import { getEffectiveCwd } from '@/server/workspace-utils'
 
 import type { ToolDef } from './types'
@@ -17,35 +17,67 @@ const ArgsSchema = z.object({
 const TIMEOUT_MS = 30_000
 const MAX_OUTPUT_CHARS = 10_000
 
-/**
- * 跨平台 shell 选择。本轮只在 macOS / Linux 验证，
- * Windows 分支保留接口，后续兼容时还需补 Windows 专属黑名单（如 del /F /Q、format）。
- */
-function getShell(): { cmd: string; args: (command: string) => string[] } {
-  if (platform() === 'win32') {
-    return { cmd: 'cmd.exe', args: (c) => ['/c', c] }
-  }
-  return { cmd: 'sh', args: (c) => ['-c', c] }
+interface ShellInvocation {
+  cmd: string
+  args: string[]
 }
 
+function buildShellInvocation(command: string, platform: Platform): ShellInvocation {
+  if (platform === 'windows') {
+    // 设置 Console 与 $OutputEncoding 为 UTF-8。比 `chcp 65001` 更彻底——chcp 在
+    // PowerShell 初始化输出流之后才生效，导致命令本身的错误信息仍是 GBK。
+    const preamble =
+      "$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new();"
+    return {
+      cmd: 'powershell.exe',
+      args: ['-NoProfile', '-NonInteractive', '-Command', `${preamble} ${command}`],
+    }
+  }
+  return { cmd: 'sh', args: ['-c', command] }
+}
+
+function killProcessTree(child: ChildProcess, platform: Platform) {
+  if (platform === 'windows' && typeof child.pid === 'number') {
+    spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true })
+    return
+  }
+  child.kill('SIGTERM')
+}
+
+const PLATFORM = currentPlatform()
+
+const DESCRIPTION_POSIX =
+  'Run a shell command (sh -c) inside the workspace (cwd is set automatically). Use POSIX syntax: ls, grep, cat, git, npm, python, etc. Output is stdout + stderr combined, truncated to 10000 chars, 30s timeout. Destructive commands (rm -rf /, sudo, fork bombs, curl | sh) are blocked. No interactive stdin.'
+
+const DESCRIPTION_WINDOWS =
+  'Run a Windows PowerShell 5.1 command inside the workspace (cwd is set automatically). ' +
+  'CRITICAL: this is Windows, not Linux/macOS. You MUST use PowerShell syntax — POSIX flags like `-la`, `-rf` do not work. ' +
+  'Examples of correct commands: `Get-ChildItem -Force` (NOT `ls -la`), `Get-Content file.txt` (NOT `cat`), ' +
+  '`Select-String pattern file.txt` (NOT `grep`), `Remove-Item path` (NOT `rm`), `New-Item -ItemType Directory` (NOT `mkdir -p`), ' +
+  '`Copy-Item src dst` (NOT `cp`), `Move-Item src dst` (NOT `mv`). git/npm/python/node work as usual. ' +
+  'Output is UTF-8, stdout + stderr combined, truncated to 10000 chars, 30s timeout. ' +
+  'Destructive commands (Remove-Item -Recurse -Force, format, shutdown, iex(iwr ...), reg delete, Set-ExecutionPolicy Unrestricted) are blocked. No interactive stdin.'
+
 /**
- * bash —— 在 workspace 内跑 shell 命令。
+ * bash —— 在 workspace 内跑 shell 命令。详见 specs/07-tools.md, specs/11-platform.md。
  *
  * cwd 强制为 workspace effective cwd（local → boundPath，sandbox → rootPath）；
- * 命令前匹配黑名单；30s 超时；stdout + stderr 合并到一个字符串截断 10000 字符。
- * AbortSignal 触发时立即 SIGTERM 子进程。
+ * 命令前匹配双平台黑名单；30s 超时；stdout + stderr 合并截断 10000 字符。
+ * AbortSignal 触发立即 kill 进程树（Windows 走 taskkill /F /T，POSIX 走 SIGTERM）。
  */
 export const bashTool: ToolDef = {
   name: 'bash',
-  description:
-    "Run a shell command inside the workspace (cwd is set automatically). Use this for git/ls/cat/grep/npm/test runs etc. Output is stdout + stderr combined, truncated to 10000 chars. 30s timeout. Destructive commands (rm -rf /, sudo, fork bombs, curl | sh) are blocked. No interactive stdin.",
+  description: PLATFORM === 'windows' ? DESCRIPTION_WINDOWS : DESCRIPTION_POSIX,
   parameters: {
     type: 'object',
     required: ['command'],
     properties: {
       command: {
         type: 'string',
-        description: 'Shell command to execute. cwd is the workspace; do not cd elsewhere.',
+        description:
+          PLATFORM === 'windows'
+            ? 'PowerShell command to execute. cwd is the workspace; do not Set-Location elsewhere.'
+            : 'Shell command to execute. cwd is the workspace; do not cd elsewhere.',
       },
     },
   },
@@ -56,10 +88,9 @@ export const bashTool: ToolDef = {
     }
 
     const command = parsed.data.command
-    for (const pat of BANNED_PATTERNS) {
-      if (pat.test(command)) {
-        return { ok: false, error: `Command rejected by safety policy: ${pat.source}` }
-      }
+    const banned = findBannedPattern(command, PLATFORM)
+    if (banned) {
+      return { ok: false, error: `Command rejected by safety policy: ${banned.source}` }
     }
 
     const workspace = await db.query.workspaces.findFirst({
@@ -68,13 +99,14 @@ export const bashTool: ToolDef = {
     if (!workspace) return { ok: false, error: 'Workspace not found' }
 
     const cwd = getEffectiveCwd(workspace)
-    const shell = getShell()
+    const shell = buildShellInvocation(command, PLATFORM)
 
     return new Promise((resolve) => {
-      const child = spawn(shell.cmd, shell.args(command), {
+      const child = spawn(shell.cmd, shell.args, {
         cwd,
         env: process.env,
         stdio: ['ignore', 'pipe', 'pipe'],
+        windowsHide: true,
       })
 
       let buffer = ''
@@ -96,10 +128,10 @@ export const bashTool: ToolDef = {
       let timedOut = false
       const timer = setTimeout(() => {
         timedOut = true
-        child.kill('SIGTERM')
+        killProcessTree(child, PLATFORM)
       }, TIMEOUT_MS)
 
-      const onAbort = () => child.kill('SIGTERM')
+      const onAbort = () => killProcessTree(child, PLATFORM)
       ctx.abortSignal.addEventListener('abort', onAbort, { once: true })
 
       child.on('error', (err) => {

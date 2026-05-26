@@ -1,0 +1,184 @@
+# Spec 11 — 平台抽象（Platform）
+
+> AgentHub 在本地运行，宿主可能是 macOS / Linux / Windows。本 spec 定义跨平台差异的处理契约：shell 选择、命令黑名单、路径校验、子进程清理。
+
+源文件：`src/server/platform.ts`（platform 检测与常量），`src/server/security.ts`（双平台黑名单），`src/server/tools/bash.ts`（shell 执行）。
+
+---
+
+## Platform 枚举
+
+```typescript
+export type Platform = 'posix' | 'windows'
+
+export function currentPlatform(): Platform {
+  return process.platform === 'win32' ? 'windows' : 'posix'
+}
+```
+
+**为什么不区分 darwin / linux**：bash 工具行为、黑名单语法、路径风格在 macOS 与 Linux 之间一致；区分到 POSIX vs Windows 两类即可。后续若出现 darwin 专属需求（如 Keychain 路径）再细化。
+
+---
+
+## Shell 选择
+
+| Platform | 命令 | 参数 | 说明 |
+|---|---|---|---|
+| `posix` | `sh` | `['-c', command]` | macOS / Linux 默认 |
+| `windows` | `powershell.exe` | `['-NoProfile', '-NonInteractive', '-Command', '<chcp> ; <command>']` | 用系统自带 PS 5.1（不依赖 pwsh 7） |
+
+**Windows 细节**：
+- 子进程启动选项加 `windowsHide: true`，避免闪现控制台
+- 命令前 prepend `$OutputEncoding = [Console]::OutputEncoding = [System.Text.UTF8Encoding]::new(); ` 强制 stdout / stderr 为 UTF-8（Windows 默认 codepage 936 / cp1252 会导致中文乱码 / LLM 上下文污染）。**不**用 `chcp 65001`——chcp 在 PowerShell 初始化输出流之后才生效，命令本身的错误信息仍是 GBK
+- 用系统自带 PS 5.1（不依赖 pwsh 7）
+
+**Why PowerShell 不用 `cmd.exe`**：cmd 语法贫瘠（无管道、变量插值能力差），LLM 生成质量低；PowerShell 5.1 在所有 Win10+ 系统预装，无需用户额外配置。
+
+**禁止**：
+- 不要在 PowerShell 命令里嵌套 `bash -c`（即便检测到 Git Bash 存在）；Phase 1 保持单 shell 策略
+- 不要给 spawn 传 `shell: true`（会让黑名单更难匹配，且引入 shell 注入风险）
+
+---
+
+## 命令黑名单（双平台）
+
+`src/server/security.ts` 导出 `getBannedPatterns(platform): RegExp[]`：
+
+### POSIX 黑名单
+
+```typescript
+const POSIX_BANNED: RegExp[] = [
+  /\brm\s+-rf\s+\//,             // rm -rf /
+  /\bsudo\b/,                     // 提权
+  /\bchmod\s+\d{3,4}\s+\//,      // chmod 777 /
+  /:\(\)\{\s*:\|:&\s*\}/,        // fork bomb
+  /curl\s+[^|]*\|\s*(bash|sh)/,  // curl | sh
+  /wget\s+[^|]*\|\s*(bash|sh)/,  // wget | sh
+  /\beval\b/,
+  /\bexec\b\s+/,
+]
+```
+
+### Windows 黑名单
+
+```typescript
+const WINDOWS_BANNED: RegExp[] = [
+  // 删根 / 删盘
+  /\b(del|erase)\s+\/[fsq\s\/]*[a-z]:\\?/i,         // del /F /Q C:\
+  /\brd\s+\/[sq\s\/]*[a-z]:\\?/i,                   // rd /S /Q C:\
+  /\bRemove-Item\b[^|;]*-Recurse[^|;]*-Force/i,     // Remove-Item -Recurse -Force
+  /\bRemove-Item\b[^|;]*-Force[^|;]*-Recurse/i,     // 参数顺序反过来
+  /\bri\b[^|;]*-Recurse[^|;]*-Force/i,              // ri = Remove-Item alias
+  // 格式化 / 关机
+  /\bformat\s+[a-z]:/i,
+  /\bshutdown\b/i,
+  /\brestart-computer\b/i,
+  /\bstop-computer\b/i,
+  // 注册表破坏
+  /\breg\s+delete\b/i,
+  /\bRemove-ItemProperty\b/i,
+  // 进程暴力清理
+  /\btaskkill\b[^|;]*\/im\s*\*/i,                   // taskkill /IM *
+  /\bStop-Process\b[^|;]*-Force[^|;]*\*/i,
+  // 远程下载 + 执行
+  /Invoke-Expression\s*\(\s*(Invoke-WebRequest|iwr|curl|wget)/i,
+  /\biex\b\s*\(\s*(iwr|curl|wget|Invoke-WebRequest)/i,
+  // 策略放宽
+  /Set-ExecutionPolicy\s+(Unrestricted|Bypass)/i,
+  // 磁盘破坏
+  /\bbcdedit\b/i,
+  /\bdiskpart\b/i,
+  // 凭据 / 安全模块
+  /\bcipher\s+\/w/i,                                // cipher /w 擦除空闲空间
+]
+```
+
+### 公共黑名单
+
+`POSIX_BANNED` 与 `WINDOWS_BANNED` 之外，所有平台共享：
+
+```typescript
+const SHARED_BANNED: RegExp[] = [
+  // 暂无；保留扩展点（未来可能加 SSRF 命令、加密货币挖矿特征等）
+]
+```
+
+`getBannedPatterns(platform)` 返回 `[...SHARED_BANNED, ...(platform === 'windows' ? WINDOWS_BANNED : POSIX_BANNED)]`。
+
+**为什么不做语义判断**：黑名单只拦最显著的破坏命令，LLM 真要绕过总能绕（如 base64 编码）；真正的兜底是沙箱（workspace.rootPath / boundPath）与人工审批（fsWriteApprovalMode）。
+
+---
+
+## 工具描述按平台变体
+
+`src/server/tools/bash.ts` 的 `description` 字段从静态字符串改为基于 `currentPlatform()` 生成：
+
+- **POSIX**：`"Run a shell command (sh -c) inside workspace. Use POSIX syntax: ls, grep, cat, git, npm. Output: stdout+stderr merged, 10000 char limit, 30s timeout. Blocked: rm -rf /, sudo, fork bombs, curl | sh."`
+- **Windows**：`"Run a PowerShell 5.1 command inside workspace. Use PowerShell syntax: Get-ChildItem, Select-String, Get-Content, git, npm. Output is UTF-8 (chcp 65001), stdout+stderr merged, 10000 char limit, 30s timeout. Blocked: Remove-Item -Recurse -Force, format, shutdown, iex(iwr ...), reg delete."`
+
+**注**：CustomAgentAdapter 与 ClaudeCodeAdapter 不共用同一工具实例；ClaudeCodeAdapter 走 SDK 原生 Bash 工具，描述由 SDK 控制，但 `canUseTool` 钩子里的黑名单走同一份 `getBannedPatterns`。
+
+---
+
+## 进程清理
+
+**POSIX**：`child.kill('SIGTERM')`，5 秒未退升级到 `SIGKILL`（现状未实现升级，Phase 3 再补）。
+
+**Windows**：Node 的 `child.kill('SIGTERM')` 在 Windows 下等价于 `TerminateProcess`，**杀不到孙子进程**（如 `powershell → npm → node`，npm 退了但 node 留下）。Phase 1 改为：
+
+```typescript
+function killProcessTree(child: ChildProcess, platform: Platform) {
+  if (platform === 'windows' && child.pid) {
+    spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true })
+  } else {
+    child.kill('SIGTERM')
+  }
+}
+```
+
+`taskkill /F /T /PID` 强制递归杀进程树；不存在的 PID 静默忽略。
+
+---
+
+## SDK 子进程的 HOME 兼容
+
+Claude Code SDK 内部用 `~` 展开（通过 `os.homedir()`）找配置。Node 在 Windows 上 `os.homedir()` 已正确返回 `C:\Users\xxx`，但若 SDK 子进程检查 `process.env.HOME`（POSIX 风俗），Windows 默认无此变量。
+
+`buildSdkEnv` 兜底：
+
+```typescript
+function buildSdkEnv(...) {
+  const base = { ...process.env }
+  if (process.platform === 'win32' && !base.HOME) {
+    base.HOME = base.USERPROFILE
+  }
+  // ...其余 API key 注入逻辑
+}
+```
+
+---
+
+## 不在本 spec 范围内（留给 Phase 2 / 3）
+
+- 沙箱路径黑名单（`isPathSafe` 的 Windows 系统目录、AppData 凭证目录）——属 spec 「workspace 沙箱」范畴，将在 `01-core-entities.md` 或独立 spec 中扩展
+- UI 文案的 placeholder 平台感知
+- 编码细节（除 `[Console]::OutputEncoding` 之外的回退路径，如 iconv-lite）
+- workspace 清理的 EBUSY 重试
+
+---
+
+## 验证清单（Phase 1 合并前）
+
+- [ ] macOS：现有 bash 工具调用行为不变（回归 `ls`、`git status`、`npm test`）
+- [ ] Windows：新建 sandbox 会话，bash 工具能跑 `Get-ChildItem`、`git --version`、`echo 中文`（输出非乱码）
+- [ ] Windows：bash 工具拒绝 `Remove-Item -Recurse -Force C:\`、`format C:`、`iex (iwr ...)`
+- [ ] Windows：bash 工具 30s 超时后用 `taskkill /F /T` 清进程树，无孤儿 `node.exe`
+- [ ] Windows：Claude Code agent 启动正常（SDK 找到 `~/.claude` 即 `%USERPROFILE%\.claude`）
+
+---
+
+## 与其他 spec 的关系
+
+- Spec 07（工具系统）：bash 工具的 `description` 与黑名单引用本 spec
+- CLAUDE.md §5.2：黑名单原文从单平台改为双平台，详见本 spec 「命令黑名单」节
+- Spec 05（adapter）：Claude Code adapter 的 `canUseTool` 黑名单走 `getBannedPatterns(currentPlatform())`

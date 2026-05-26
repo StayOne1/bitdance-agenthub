@@ -11,13 +11,46 @@ import { isPathSafe } from '@/server/workspace-utils'
  *
  * 列出指定目录下的**子目录**（用于 DirPickerDialog）。
  * - path 不传：默认 homedir()
- * - 必须是绝对路径 + 是目录 + 通过 isPathSafe
+ * - path === '__drives__'：返回当前可用盘符（Windows 专属虚拟根；POSIX 上返回 /）
+ * - 其他：必须是绝对路径 + 是目录 + 通过 isPathSafe
  * - 隐藏 dotfile（不在 DirPicker 里展示，避免噪音）
- * - 返回 parent 用于「上一级」导航；根目录时 parent 为 null
+ * - 返回 parent 用于「上一级」导航；根目录时 parent 为 null，但 Windows 盘符根（如 C:\）的 parent 为 '__drives__'
+ * - entry.path 可选；存在时前端应直接用它做下一跳（用于盘符 → C:\）
  */
+
+const DRIVES_SENTINEL = '__drives__'
+
+function listAvailableDrives(): string[] {
+  if (process.platform !== 'win32') return ['/']
+  const drives: string[] = []
+  for (let i = 65; i <= 90; i++) {
+    const root = `${String.fromCharCode(i)}:\\`
+    try {
+      statSync(root)
+      drives.push(root)
+    } catch {
+      // drive not present
+    }
+  }
+  return drives
+}
+
 export async function GET(req: NextRequest) {
   const requested = req.nextUrl.searchParams.get('path')
   const target = requested?.trim() || homedir()
+
+  if (target === DRIVES_SENTINEL) {
+    const drives = listAvailableDrives()
+    return NextResponse.json({
+      path: DRIVES_SENTINEL,
+      parent: null,
+      entries: drives.map((d) => ({
+        name: d.replace(/[\\/]$/, '') || d,
+        isDirectory: true,
+        path: d,
+      })),
+    })
+  }
 
   if (!path.isAbsolute(target)) {
     return NextResponse.json({ error: 'path must be absolute' }, { status: 400 })
@@ -56,7 +89,9 @@ export async function GET(req: NextRequest) {
 
   const parent = (() => {
     const p = path.dirname(resolved)
-    return p === resolved ? null : p
+    if (p !== resolved) return p
+    // 已到根。Windows 上盘符根（C:\）暴露虚拟 drives 列表作为上一级
+    return process.platform === 'win32' ? DRIVES_SENTINEL : null
   })()
 
   return NextResponse.json({

@@ -1,6 +1,6 @@
 'use client'
 
-import { ChevronRight, Folder, Home, Loader2 } from 'lucide-react'
+import { ChevronRight, Folder, HardDrive, Home, Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 
 import { Button } from '@/components/ui/button'
@@ -19,7 +19,11 @@ import { cn } from '@/lib/utils'
 interface DirEntry {
   name: string
   isDirectory: boolean
+  path?: string
 }
+
+const DRIVES_SENTINEL = '__drives__'
+const DRIVES_LABEL = '此电脑'
 
 /**
  * DirPickerDialog —— 服务端 listdir 驱动的目录选择器。
@@ -81,8 +85,18 @@ export function DirPickerDialog({
         <div className="flex items-center gap-2 rounded-md border bg-muted/40 px-2 py-1.5">
           <Folder className="size-4 shrink-0 text-muted-foreground" />
           <code className="min-w-0 flex-1 truncate font-mono text-xs">
-            {currentPath || '加载中...'}
+            {currentPath === DRIVES_SENTINEL ? DRIVES_LABEL : currentPath || '加载中...'}
           </code>
+          <Button
+            size="sm"
+            variant="ghost"
+            onClick={() => void navigate(DRIVES_SENTINEL)}
+            disabled={loading}
+            title="此电脑（盘符列表）"
+            className="shrink-0"
+          >
+            <HardDrive className="size-3.5" />
+          </Button>
           <Button
             size="sm"
             variant="ghost"
@@ -96,8 +110,8 @@ export function DirPickerDialog({
         </div>
 
         {/* 上一级 / 内容 */}
-        <ScrollArea className="h-72 rounded-md border">
-          <div className="divide-y">
+        <ScrollArea className="h-72 w-full min-w-0 overflow-hidden rounded-md border">
+          <div className="w-full divide-y">
             {parent && (
               <button
                 type="button"
@@ -106,7 +120,9 @@ export function DirPickerDialog({
                 className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent disabled:opacity-50"
               >
                 <ChevronRight className="size-4 rotate-180 text-muted-foreground" />
-                <span className="text-muted-foreground">.. (上一级)</span>
+                <span className="text-muted-foreground">
+                  .. ({parent === DRIVES_SENTINEL ? DRIVES_LABEL : '上一级'})
+                </span>
               </button>
             )}
             {loading ? (
@@ -120,7 +136,8 @@ export function DirPickerDialog({
               </div>
             ) : (
               entries.map((e) => {
-                const childPath = joinPath(currentPath, e.name)
+                const childPath = e.path ?? joinPath(currentPath, e.name)
+                const isDrive = currentPath === DRIVES_SENTINEL
                 return (
                   <button
                     key={e.name}
@@ -128,9 +145,13 @@ export function DirPickerDialog({
                     onClick={() => void navigate(childPath)}
                     className="flex w-full items-center gap-2 px-3 py-2 text-left text-sm hover:bg-accent"
                   >
-                    <Folder className="size-4 shrink-0 text-muted-foreground" />
-                    <span className="truncate">{e.name}</span>
-                    <ChevronRight className="ml-auto size-3.5 shrink-0 text-muted-foreground/50" />
+                    {isDrive ? (
+                      <HardDrive className="size-4 shrink-0 text-muted-foreground" />
+                    ) : (
+                      <Folder className="size-4 shrink-0 text-muted-foreground" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{e.name}</span>
+                    <ChevronRight className="size-3.5 shrink-0 text-muted-foreground/50" />
                   </button>
                 )
               })
@@ -153,12 +174,12 @@ export function DirPickerDialog({
           </Button>
           <Button
             onClick={() => {
-              if (currentPath) {
+              if (currentPath && currentPath !== DRIVES_SENTINEL) {
                 onSelect(currentPath)
                 onOpenChange(false)
               }
             }}
-            disabled={!currentPath || loading}
+            disabled={!currentPath || currentPath === DRIVES_SENTINEL || loading}
           >
             选择此目录
           </Button>
