@@ -38,7 +38,9 @@ function buildShellInvocation(command: string, platform: Platform): ShellInvocat
 
 function killProcessTree(child: ChildProcess, platform: Platform) {
   if (platform === 'windows' && typeof child.pid === 'number') {
-    spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true })
+    const killer = spawn('taskkill', ['/F', '/T', '/PID', String(child.pid)], { windowsHide: true })
+    // 极少数 Win 镜像（Server Core 缩减版）没 taskkill.exe，吃 ENOENT 防 unhandled error 崩 worker
+    killer.on('error', () => {})
     return
   }
   child.kill('SIGTERM')

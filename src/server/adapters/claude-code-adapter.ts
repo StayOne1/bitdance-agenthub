@@ -13,6 +13,7 @@ import type { WorkspaceRow } from '@/db/schema'
 import { readIfExists } from '@/server/fs-service'
 import { newMessageId, newToolCallId } from '@/server/ids'
 import { pendingWrites } from '@/server/pending-writes'
+import { IS_WINDOWS } from '@/server/platform'
 import { findBannedPattern } from '@/server/security'
 import { toolRegistry } from '@/server/tools/registry'
 import type { ToolContext } from '@/server/tools/types'
@@ -463,7 +464,7 @@ function buildSdkEnv(
 ): Record<string, string | undefined> {
   const base: Record<string, string | undefined> = { ...process.env }
   // Windows 上 Claude Code SDK 内部可能查 $HOME 而非 %USERPROFILE%，兜底一下。
-  if (process.platform === 'win32' && !base.HOME) {
+  if (IS_WINDOWS && !base.HOME) {
     base.HOME = base.USERPROFILE
   }
   if (apiBaseUrl) {

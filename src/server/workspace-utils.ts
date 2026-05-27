@@ -1,8 +1,9 @@
 import { statSync } from 'node:fs'
-import { homedir, platform } from 'node:os'
+import { homedir } from 'node:os'
 import path from 'node:path'
 
 import type { WorkspaceRow } from '@/db/schema'
+import { IS_WINDOWS } from '@/server/platform'
 
 /**
  * workspace 模式相关 helper：
@@ -19,7 +20,7 @@ export function getEffectiveCwd(workspace: WorkspaceRow): string {
   return workspace.rootPath
 }
 
-const IS_WIN = platform() === 'win32'
+const IS_WIN = IS_WINDOWS
 
 /** 子路径包含判断。Windows 大小写不敏感；POSIX 大小写敏感。 */
 export function isPathWithin(child: string, parent: string): boolean {

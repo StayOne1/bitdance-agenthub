@@ -30,6 +30,11 @@ const WINDOWS_BANNED: RegExp[] = [
   /\bRemove-Item\b[^|;]*-Recurse[^|;]*-Force/i,
   /\bRemove-Item\b[^|;]*-Force[^|;]*-Recurse/i,
   /\bri\b[^|;]*-Recurse[^|;]*-Force/i,
+  // PowerShell 上 `rm` / `rmdir` / `erase` 都是 Remove-Item 的 alias，单独拦 —— ri 已在上方
+  /\brm\b[^|;]*-Recurse[^|;]*-Force/i,
+  /\brm\b[^|;]*-Force[^|;]*-Recurse/i,
+  /\brmdir\b[^|;]*-Recurse[^|;]*-Force/i,
+  /\brmdir\b[^|;]*-Force[^|;]*-Recurse/i,
   /\bformat\s+[a-z]:/i,
   /\bshutdown\b/i,
   /\brestart-computer\b/i,

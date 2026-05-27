@@ -69,6 +69,11 @@ const WINDOWS_BANNED: RegExp[] = [
   /\bRemove-Item\b[^|;]*-Recurse[^|;]*-Force/i,     // Remove-Item -Recurse -Force
   /\bRemove-Item\b[^|;]*-Force[^|;]*-Recurse/i,     // 参数顺序反过来
   /\bri\b[^|;]*-Recurse[^|;]*-Force/i,              // ri = Remove-Item alias
+  // rm / rmdir 在 PowerShell 也是 Remove-Item alias，单独拦（注意：POSIX 黑名单的 `rm -rf /` 走的是 POSIX 分支）
+  /\brm\b[^|;]*-Recurse[^|;]*-Force/i,
+  /\brm\b[^|;]*-Force[^|;]*-Recurse/i,
+  /\brmdir\b[^|;]*-Recurse[^|;]*-Force/i,
+  /\brmdir\b[^|;]*-Force[^|;]*-Recurse/i,
   // 格式化 / 关机
   /\bformat\s+[a-z]:/i,
   /\bshutdown\b/i,
@@ -193,6 +198,8 @@ export function isPathWithin(child: string, parent: string): boolean {
 **普通 UNC 网络路径**（`\\server\share\...`）暂拒——文件系统语义不可靠（offline、ACL）。后续有需求再开放。
 
 Drives 列表通过 `statSync('A:\\')` … `statSync('Z:\\')` 探测可用盘符（同 `/api/fs/listdir` 的 drives sentinel），模块级缓存避免重复 IO。
+
+**缓存生命周期**：进程级缓存，**只在 Next server 重启时刷新**。dev 期间用户热插 U 盘 / 网络盘映射，新盘符不会出现在 `getSystemRoots()`，对应的 `\Windows`、`\Program Files` 等系统根拦截不到该盘符。这是有意接受的 trade-off —— 频繁 `statSync` 26 个盘符在每次 `isPathSafe` 调用里都跑代价更大。受影响的是「软安全」：用户能直接编辑 DB 绕过 isPathSafe，所以 stale 盘符的拦截缺失不算严重风险。
 
 ### 敏感子路径（sensitiveSegments）
 

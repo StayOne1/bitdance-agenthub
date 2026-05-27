@@ -4,6 +4,7 @@ import path from 'node:path'
 
 import { NextRequest, NextResponse } from 'next/server'
 
+import { IS_WINDOWS } from '@/server/platform'
 import { isPathSafe } from '@/server/workspace-utils'
 
 /**
@@ -37,7 +38,7 @@ const WINDOWS_HIDDEN_NAMES = new Set(
 )
 
 function listAvailableDrives(): string[] {
-  if (process.platform !== 'win32') return ['/']
+  if (!IS_WINDOWS) return ['/']
   const drives: string[] = []
   for (let i = 65; i <= 90; i++) {
     const root = `${String.fromCharCode(i)}:\\`
@@ -97,7 +98,7 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: `Cannot read directory: ${msg}` }, { status: 403 })
   }
 
-  const isWin = process.platform === 'win32'
+  const isWin = IS_WINDOWS
   const entries = raw
     .filter((e) => !e.name.startsWith('.'))
     .filter((e) => !isWin || !WINDOWS_HIDDEN_NAMES.has(e.name.toLowerCase()))
@@ -109,7 +110,7 @@ export async function GET(req: NextRequest) {
     const p = path.dirname(resolved)
     if (p !== resolved) return p
     // 已到根。Windows 上盘符根（C:\）暴露虚拟 drives 列表作为上一级
-    return process.platform === 'win32' ? DRIVES_SENTINEL : null
+    return IS_WINDOWS ? DRIVES_SENTINEL : null
   })()
 
   return NextResponse.json({
