@@ -7,6 +7,7 @@ import { AgentLibrary } from '@/components/agent-library'
 import { AgentAvatar } from '@/components/agent-avatar'
 import { ArtifactLibrary } from '@/components/artifact-library'
 import { NewConversationDialog } from '@/components/new-conversation-dialog'
+import { SettingsButton } from '@/components/settings-dialog'
 import { ThemeToggle } from '@/components/theme-toggle'
 import { UsageDashboard } from '@/components/usage-dashboard'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
@@ -121,6 +122,7 @@ export function Sidebar() {
           </div>
         )}
         <div className={cn('flex items-center', collapsed ? 'flex-col gap-1' : 'gap-0.5')}>
+          <SettingsButton />
           <ThemeToggle />
           <Button
             size="icon"

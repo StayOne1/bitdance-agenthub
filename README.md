@@ -80,25 +80,32 @@ Claude Code Agent 通过 SDK MCP server 同样可以用这套工具。
 ```bash
 pnpm install
 
+# 把 better-sqlite3 native module rebuild 到 Electron ABI（一次性，配合 ELECTRON_RUN_AS_NODE 跑 dev / build）
+pnpm electron:rebuild
+
 # 配置 API key（任一）
 cp .env.example .env.local
 # .env.local 填入 ANTHROPIC_API_KEY / DEEPSEEK_API_KEY / OPENAI_API_KEY / ARK_API_KEY
+# 或留空，启动后在 UI 右上齿轮「设置」面板里填（见下方「设置面板」）
 
-# 初始化 DB（首次 / 拉新 schema 时）
-pnpm db:push
-pnpm db:seed                                          # 种 builtin agents
-npx tsx src/db/migrate-add-workspace-mode.ts          # 跑各 migration
-npx tsx src/db/migrate-add-fs-write-approval.ts
-npx tsx src/db/migrate-add-api-base-url.ts
-npx tsx src/db/migrate-add-bookmarks.ts
-npx tsx src/db/migrate-add-conversation-pin.ts
-npx tsx src/db/migrate-add-message-usage.ts
-npx tsx src/db/migrate-add-run-usage.ts
-
-# 起服务
+# 起服务（dev 模式 / web 端）
 pnpm dev
 # → http://localhost:3000
 ```
+
+**首次启动会自动建表 + 自动 seed 5 个内置 Agent**（Orchestrator / PM 小灰 / UI 设计师 / 前端工程师 / Reviewer）—— 不再需要 `pnpm db:push` / `pnpm db:seed`。详见 Spec 12 §5.4。
+
+### 桌面版（Electron）
+
+```bash
+pnpm electron:dev          # 并发跑 Next dev + tsc watch + Electron 窗口
+pnpm electron:build        # 出 release/AgentHub-<ver>-arm64.dmg + AgentHub-<ver>.dmg（x64） + AgentHub-<ver>-setup.exe
+```
+
+详见 Spec 12（含 ABI 选型、打包流程、验证清单）。
+
+### 设置面板（推荐）
+Sidebar 顶部齿轮 → 「API 设置」，填 Anthropic / OpenAI / DeepSeek / 火山方舟 key 与 Anthropic base URL。优先级高于 `.env.local`、低于 agent 自配 key；明文存 SQLite 单行表 `app_settings`（本地单用户场景，不引入 keychain）。详见 Spec 08 §8 与 CLAUDE.md §5.4。
 
 ### Claude Code 零配置
 本机装过 Claude Code CLI 并登录过的话，SDK 会自动读 `~/.claude/.credentials.json` OAuth token，**不需要单独配 `ANTHROPIC_API_KEY`**。
@@ -161,9 +168,11 @@ pnpm dev
 | `05-adapter-interface.md` | AgentPlatformAdapter 接口 + 各 adapter 实现要点 |
 | `06-orchestrator-flow.md` | Orchestrator 三阶段工作流 |
 | `07-tools.md` | 内置工具清单与签名 |
-| `08-db-schema.md` | Drizzle schema 与索引 |
+| `08-db-schema.md` | Drizzle schema 与索引（含 app_settings 全局 key 表） |
 | `09-frontend-architecture.md` | 前端状态结构与事件应用 |
 | `10-agent-builder.md` | 自建 Agent 流程 |
+| `11-platform.md` | 平台抽象（POSIX / Windows shell、命令黑名单、路径校验、子进程清理） |
+| `12-desktop-electron.md` | 桌面版（Electron 打包 DMG / EXE） |
 
 AI 协作约定见 `CLAUDE.md`。
 
@@ -172,12 +181,15 @@ AI 协作约定见 `CLAUDE.md`。
 ## 🛠 常用命令
 
 ```bash
-pnpm dev            # 启动 dev server
+pnpm dev            # 启动 dev server（ELECTRON_RUN_AS_NODE 包装）
 pnpm typecheck      # tsc --noEmit
 pnpm lint           # eslint
-pnpm build          # 生产构建
-pnpm db:push        # 同步 schema 到 SQLite
-pnpm db:seed        # 种 builtin agents
+pnpm build          # 生产构建（Next standalone）
+pnpm db:push        # 同步 schema 到 SQLite（如手工改 schema.ts）
+pnpm db:seed        # 重灌 builtin agents（首次启动会自动 seed，这里是手动重灌入口）
+pnpm electron:rebuild  # better-sqlite3 → Electron ABI（pnpm install 后必做一次）
+pnpm electron:dev   # 启动 Electron 桌面壳 + 加载 dev server
+pnpm electron:build # 出 DMG / EXE
 ```
 
 DB 文件位于 `.agenthub-data/agenthub.db`。Workspace 默认在 `.agenthub-data/workspaces/<conv_xxx>/`。
@@ -189,7 +201,7 @@ DB 文件位于 `.agenthub-data/agenthub.db`。Workspace 默认在 `.agenthub-da
 - [ ] Codex adapter（OpenAI codex CLI 集成；目前可用 `gpt-5-codex` 模型 + CustomAgent 走 OpenAI 协议替代）
 - [ ] Pin LLM 上下文的 UI 入口（schema 字段 `pinnedMessageIds` 已有，agent-runner 已读，缺前端入口；当前 ☆ 是纯导航书签，独立于 LLM Pin）
 - [ ] sandbox 模式的总量配额对 Claude Code SDK 失效（SDK 自己写盘绕过我们的 quota）
-- [ ] 桌面端 / 移动端 native（P2，已说不做）
+- [ ] 移动端 native（P2，已说不做；桌面端已 Electron 打包，详见 Spec 12）
 - [ ] 测试覆盖
 
 ---

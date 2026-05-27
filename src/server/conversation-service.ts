@@ -19,7 +19,10 @@ import {
 import { IS_WINDOWS } from './platform'
 import { isPathSafe } from './workspace-utils'
 
-const WORKSPACES_ROOT = path.resolve(process.cwd(), '.agenthub-data', 'workspaces')
+// Electron 模式下 main 进程注入 AGENTHUB_DATA_DIR；web / dev 走 cwd 兜底（详见 Spec 12 §5）
+const DATA_DIR =
+  process.env.AGENTHUB_DATA_DIR ?? path.resolve(process.cwd(), '.agenthub-data')
+const WORKSPACES_ROOT = path.join(DATA_DIR, 'workspaces')
 
 /**
  * 删除 workspace 目录。Windows 上 EBUSY/EPERM/ENOTEMPTY 走指数退避（详见 specs/11-platform.md）：

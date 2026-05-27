@@ -1,5 +1,6 @@
 import type {
   AgentRow,
+  AppSettingsRow,
   ArtifactRow,
   AttachmentRow,
   ConversationRow,
@@ -515,4 +516,29 @@ export interface UsageSummary {
 
 export async function fetchUsageSummary(): Promise<UsageSummary> {
   return json<UsageSummary>(fetch('/api/usage/summary'))
+}
+
+// ─── App Settings (全局 API key) ───────────────
+export async function fetchAppSettings(): Promise<AppSettingsRow> {
+  const { settings } = await json<{ settings: AppSettingsRow }>(fetch('/api/settings'))
+  return settings
+}
+
+export interface AppSettingsPatchBody {
+  anthropicApiKey?: string | null
+  anthropicBaseUrl?: string | null
+  openaiApiKey?: string | null
+  deepseekApiKey?: string | null
+  arkApiKey?: string | null
+}
+
+export async function updateAppSettings(patch: AppSettingsPatchBody): Promise<AppSettingsRow> {
+  const { settings } = await json<{ settings: AppSettingsRow }>(
+    fetch('/api/settings', {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(patch),
+    }),
+  )
+  return settings
 }

@@ -1,0 +1,195 @@
+/**
+ * DB 启动期自举：建表 + 自动 seed 内置 agent。
+ *
+ * 设计意图：
+ *  - 打包后桌面版第一次启动时，userData 里只有空 DB 文件，没有任何表 / 数据。
+ *    本模块在 client.ts 初始化 drizzle 之前同步建表（CREATE TABLE IF NOT EXISTS）。
+ *  - 内置 agent 也在此自动 seed —— 不再需要用户手动 `pnpm db:seed`（packaged 应用里也没有 pnpm 可用）。
+ *
+ * 全部用 better-sqlite3 原生同步 API：
+ *  - CJS 标准下 `client.ts` 模块顶层不能 await；drizzle 的 query API 全是 Promise，没法在 module-init 阶段调
+ *  - better-sqlite3 是同步的 native binding，prepare/run 立即返回，对 sub-ms 启动期开销可忽略
+ *
+ * 幂等：
+ *  - CREATE TABLE IF NOT EXISTS 不重复建表
+ *  - seed 前先查 is_builtin=1 是否已有记录，已有就跳过
+ *
+ * 详见 Spec 12 §5 / §6 与 Spec 08。
+ */
+import type Database from 'better-sqlite3'
+
+import { BUILTIN_AGENTS } from './builtin-agents'
+
+const DDL: string[] = [
+  // ─── agents ────────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS agents (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    avatar TEXT NOT NULL,
+    description TEXT NOT NULL,
+    capabilities TEXT NOT NULL,
+    system_prompt TEXT NOT NULL,
+    adapter_name TEXT NOT NULL,
+    model_provider TEXT,
+    model_id TEXT,
+    api_key TEXT,
+    api_base_url TEXT,
+    tool_names TEXT NOT NULL,
+    is_builtin INTEGER NOT NULL DEFAULT 0,
+    is_orchestrator INTEGER NOT NULL DEFAULT 0,
+    supports_vision INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  )`,
+
+  // ─── conversations ─────────────────────────────
+  `CREATE TABLE IF NOT EXISTS conversations (
+    id TEXT PRIMARY KEY,
+    title TEXT NOT NULL,
+    mode TEXT NOT NULL,
+    agent_ids TEXT NOT NULL,
+    pinned_message_ids TEXT NOT NULL DEFAULT '[]',
+    bookmarked_message_ids TEXT NOT NULL DEFAULT '[]',
+    archived INTEGER NOT NULL DEFAULT 0,
+    pinned_at INTEGER,
+    fs_write_approval_mode TEXT NOT NULL DEFAULT 'review',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_conv_updated ON conversations(updated_at)`,
+
+  // ─── messages ──────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS messages (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    role TEXT NOT NULL,
+    agent_id TEXT REFERENCES agents(id),
+    parts TEXT NOT NULL,
+    status TEXT NOT NULL,
+    parent_message_id TEXT,
+    mentioned_agent_ids TEXT NOT NULL DEFAULT '[]',
+    run_id TEXT,
+    usage TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_messages_conv_created ON messages(conversation_id, created_at)`,
+
+  // ─── artifacts ─────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS artifacts (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    type TEXT NOT NULL,
+    title TEXT NOT NULL,
+    content TEXT NOT NULL,
+    version INTEGER NOT NULL DEFAULT 1,
+    parent_artifact_id TEXT,
+    created_by_agent_id TEXT NOT NULL REFERENCES agents(id),
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_artifacts_conv ON artifacts(conversation_id)`,
+
+  // ─── workspaces ────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS workspaces (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL UNIQUE REFERENCES conversations(id) ON DELETE CASCADE,
+    root_path TEXT NOT NULL,
+    mode TEXT NOT NULL DEFAULT 'sandbox',
+    bound_path TEXT,
+    created_at INTEGER NOT NULL
+  )`,
+
+  // ─── attachments ───────────────────────────────
+  `CREATE TABLE IF NOT EXISTS attachments (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    kind TEXT NOT NULL,
+    file_name TEXT NOT NULL,
+    file_path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mime_type TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_attachments_conv ON attachments(conversation_id)`,
+
+  // ─── agent_runs ────────────────────────────────
+  `CREATE TABLE IF NOT EXISTS agent_runs (
+    id TEXT PRIMARY KEY,
+    conversation_id TEXT NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
+    agent_id TEXT NOT NULL REFERENCES agents(id),
+    trigger_message_id TEXT,
+    status TEXT NOT NULL,
+    error TEXT,
+    parent_run_id TEXT,
+    usage TEXT,
+    started_at INTEGER NOT NULL,
+    finished_at INTEGER
+  )`,
+  `CREATE INDEX IF NOT EXISTS idx_runs_parent ON agent_runs(parent_run_id)`,
+
+  // ─── app_settings ──────────────────────────────
+  `CREATE TABLE IF NOT EXISTS app_settings (
+    id TEXT PRIMARY KEY,
+    anthropic_api_key TEXT,
+    anthropic_base_url TEXT,
+    openai_api_key TEXT,
+    deepseek_api_key TEXT,
+    ark_api_key TEXT,
+    updated_at INTEGER NOT NULL
+  )`,
+]
+
+/** 建表 / 建索引（幂等）。 */
+function ensureSchema(sqlite: Database.Database): void {
+  for (const stmt of DDL) {
+    sqlite.exec(stmt)
+  }
+}
+
+/** 已有任意 builtin agent 就跳过；否则一次插入全部。 */
+function ensureBuiltinAgents(sqlite: Database.Database): void {
+  const row = sqlite
+    .prepare('SELECT 1 AS one FROM agents WHERE is_builtin = 1 LIMIT 1')
+    .get()
+  if (row) return
+
+  const insert = sqlite.prepare(`
+    INSERT INTO agents (
+      id, name, avatar, description, capabilities, system_prompt,
+      adapter_name, model_provider, model_id, api_key, api_base_url,
+      tool_names, is_builtin, is_orchestrator, supports_vision, created_at
+    ) VALUES (
+      @id, @name, @avatar, @description, @capabilities, @system_prompt,
+      @adapter_name, @model_provider, @model_id, @api_key, @api_base_url,
+      @tool_names, @is_builtin, @is_orchestrator, @supports_vision, @created_at
+    )
+  `)
+
+  const tx = sqlite.transaction((agents: typeof BUILTIN_AGENTS) => {
+    for (const a of agents) {
+      insert.run({
+        id: a.id,
+        name: a.name,
+        avatar: a.avatar,
+        description: a.description,
+        capabilities: JSON.stringify(a.capabilities),
+        system_prompt: a.systemPrompt,
+        adapter_name: a.adapterName,
+        model_provider: a.modelProvider ?? null,
+        model_id: a.modelId ?? null,
+        api_key: a.apiKey ?? null,
+        api_base_url: a.apiBaseUrl ?? null,
+        tool_names: JSON.stringify(a.toolNames),
+        is_builtin: a.isBuiltin ? 1 : 0,
+        is_orchestrator: a.isOrchestrator ? 1 : 0,
+        supports_vision: a.supportsVision ? 1 : 0,
+        created_at: a.createdAt,
+      })
+    }
+  })
+
+  tx(BUILTIN_AGENTS)
+}
+
+export function bootstrapDatabase(sqlite: Database.Database): void {
+  ensureSchema(sqlite)
+  ensureBuiltinAgents(sqlite)
+}

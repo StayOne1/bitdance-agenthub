@@ -1,6 +1,8 @@
 # Spec 08 — 数据库 Schema
 
-> Drizzle ORM + SQLite。本 spec 描述 7 张表的字段、索引、外键级联策略，是 Spec 01 实体的物理映射。**修改字段需先讨论。**
+> Drizzle ORM + SQLite。本 spec 描述 8 张表的字段、索引、外键级联策略，是 Spec 01 实体的物理映射。**修改字段需先讨论。**
+>
+> 7 张「业务表」（agents / conversations / messages / artifacts / workspaces / attachments / agent_runs）映射 Spec 01 的 7 个实体；第 8 张 `app_settings` 是单行配置表，不对应实体。
 
 源文件：`src/db/schema.ts`
 
@@ -197,6 +199,44 @@ INDEX idx_runs_parent ON (parent_run_id)
 
 ---
 
+## 8. app_settings
+
+```ts
+app_settings {
+  id                  text PK             // 固定 'singleton'，单行表
+  anthropic_api_key   text                // Anthropic / Claude Code 用
+  anthropic_base_url  text                // 第三方网关（anyrouter 等）；非空时 anthropic_api_key 作 AUTH_TOKEN
+  openai_api_key      text                // OpenAI provider
+  deepseek_api_key    text                // DeepSeek provider
+  ark_api_key         text                // 火山方舟 provider
+  updated_at          int  NOT NULL
+}
+```
+
+**为什么单行表**：本地单用户场景，全局只有一份 API 配置。建表是为了让用户走 UI 改而不是编辑 `.env.local`；用 KV 表会让每个 key 一行查询，反而麻烦。`id='singleton'` 是约定常量（`src/server/settings-service.ts:SINGLETON_ID`），insert / upsert 都走它。
+
+**约束**：
+- 所有字段可空。空 / 空串归一为 `NULL`（`settings-service.normalize` 处理）
+- 与 `agents.api_key` / `agents.api_base_url` 不冲突：per-agent 字段优先级最高，本表是「全局兜底」
+- **不**外键关联 agents（provider 与 agent 是多对多关系，agent 通过 `model_provider` / `adapter_name` 选 key）
+
+**Key 解析优先级**（详见 Spec 05「API key fallback」与 `agent-runner.ts:buildAdapterInput`）：
+
+```
+1. agents.api_key           — per-agent override（最高）
+2. app_settings.<provider>  — 用户在设置面板自填
+3. process.env.<PROVIDER>   — .env.local 兜底
+4. ~/.claude/.credentials.json — 仅 Claude Code adapter 的 OAuth fallback
+```
+
+`anthropic_base_url` 的解析同链：`agents.api_base_url` → `app_settings.anthropic_base_url` → `process.env.ANTHROPIC_BASE_URL` → SDK 默认。
+
+**索引**：无（单行查询不需要）。
+
+**桌面版（Electron）兼容**：本表是「全局 key」的唯一持久化点，**不**引入 keychain / safeStorage 等第三方存储，详见 CLAUDE.md §5.4 与 Spec 11。Electron 下 DB 文件位置改为 `app.getPath('userData')`，本表语义不变。
+
+---
+
 ## Cascade 关系图
 
 ```
@@ -209,6 +249,8 @@ conversations  ─── CASCADE ──┬─► messages
 agents ──(no cascade)──── messages.agent_id
                           artifacts.created_by_agent_id
                           agent_runs.agent_id
+
+app_settings ──(独立，无外键)── 单行表，与任何业务表都无 FK 关系
 ```
 
 **为什么 agents 不 cascade**：删除 agent 不应抹掉历史消息/产物（用户期望「已停用 agent」的灰态保留记录）。前端展示时检测 `agentId` 找不到 → 渲染 stub。
@@ -253,5 +295,6 @@ agents ──(no cascade)──── messages.agent_id
 | Attachment | `att_` | `att_qWeR...` |
 | AgentRun | `run_` | `run_xT9m...` |
 | ToolCall (内存中) | `call_` | `call_aBc...` |
+| AppSettings | `'singleton'` | 不用 nanoid，固定字面量 |
 
-ID 生成器统一在 `src/server/ids.ts`，nanoid 长度 12，URL-safe alphabet。
+ID 生成器统一在 `src/server/ids.ts`，nanoid 长度 12，URL-safe alphabet。`app_settings.id` 不走 nanoid，由 `settings-service.SINGLETON_ID` 直接写入。

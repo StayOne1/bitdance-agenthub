@@ -2,16 +2,23 @@
   "name": "bytedance-agenthub",
   "version": "0.1.0",
   "private": true,
+  "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
+    "dev": "node scripts/run-electron-node.mjs node_modules/next/dist/bin/next dev",
+    "build": "node scripts/run-electron-node.mjs node_modules/next/dist/bin/next build",
+    "start": "node scripts/run-electron-node.mjs node_modules/next/dist/bin/next start",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
-    "db:generate": "drizzle-kit generate",
-    "db:push": "drizzle-kit push --force",
-    "db:studio": "drizzle-kit studio",
-    "db:seed": "tsx src/db/seed.ts"
+    "db:generate": "node scripts/run-electron-node.mjs node_modules/drizzle-kit/bin.cjs generate",
+    "db:push": "node scripts/run-electron-node.mjs node_modules/drizzle-kit/bin.cjs push --force",
+    "db:studio": "node scripts/run-electron-node.mjs node_modules/drizzle-kit/bin.cjs studio",
+    "db:seed": "node scripts/run-electron-node.mjs node_modules/tsx/dist/cli.mjs src/db/seed.ts",
+    "electron:tsc": "tsc -p electron/tsconfig.json",
+    "electron:tsc:watch": "tsc -w -p electron/tsconfig.json --preserveWatchOutput",
+    "electron:rebuild": "electron-rebuild -f -w better-sqlite3",
+    "electron:prebuild": "node scripts/electron-prebuild.mjs",
+    "electron:dev": "concurrently -k -n NEXT,TSC,ELECTRON -c blue,yellow,magenta \"pnpm dev\" \"pnpm electron:tsc:watch\" \"wait-on -d 200 tcp:127.0.0.1:3000 file:./dist-electron/main.js && node scripts/electron-dev.mjs\"",
+    "electron:build": "pnpm build && pnpm electron:prebuild && pnpm electron:tsc && electron-builder"
   },
   "dependencies": {
     "@anthropic-ai/claude-agent-sdk": "^0.3.147",
@@ -41,22 +48,74 @@
     "zustand": "^5.0.13"
   },
   "devDependencies": {
+    "@electron/rebuild": "^4.0.4",
     "@tailwindcss/postcss": "^4",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^20",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "concurrently": "^9.2.1",
     "drizzle-kit": "^0.31.10",
+    "electron": "33.4.11",
+    "electron-builder": "^26.8.1",
     "eslint": "^9",
     "eslint-config-next": "16.2.6",
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
-    "typescript": "^5"
+    "typescript": "^5",
+    "wait-on": "^9.0.10"
   },
   "pnpm": {
     "onlyBuiltDependencies": [
       "better-sqlite3",
-      "esbuild"
+      "esbuild",
+      "electron"
     ]
+  },
+  "build": {
+    "appId": "com.agenthub.app",
+    "productName": "AgentHub",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "asar": true,
+    "asarUnpack": [
+      ".next/standalone/**"
+    ],
+    "files": [
+      "dist-electron/**",
+      ".next/standalone/**",
+      "package.json"
+    ],
+    "npmRebuild": false,
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "arm64",
+            "x64"
+          ]
+        }
+      ],
+      "hardenedRuntime": false,
+      "gatekeeperAssess": false
+    },
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ]
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
+    }
   }
 }

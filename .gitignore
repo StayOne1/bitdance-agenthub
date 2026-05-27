@@ -45,6 +45,10 @@ next-env.d.ts
 /.agenthub-data/
 /drizzle/
 
+# Electron build outputs
+/dist-electron/
+/release/
+
 # IDE
 .vscode/
 .idea/

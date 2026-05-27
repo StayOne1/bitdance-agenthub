@@ -9,6 +9,7 @@ import type { AdapterAttachment, AdapterInput } from './adapters/types'
 import { getAttachmentAbsolutePath } from './attachment-service'
 import { eventBus } from './event-bus'
 import { newRunId } from './ids'
+import { getAppSettings } from './settings-service'
 import { getEffectiveCwd } from './workspace-utils'
 
 /**
@@ -168,7 +169,7 @@ async function executeSimpleRun(
 
   const adapter = agentRegistry.getAdapter(agent)
   const stream = adapter.stream(
-    buildAdapterInput(
+    await buildAdapterInput(
       args,
       agent,
       runId,
@@ -217,7 +218,7 @@ async function executeOrchestratorRun(
   const planStream = agentRegistry
     .getAdapter(agent)
     .stream(
-      buildAdapterInput(args, agent, runId, userPrompt, workspace, planToolNames, planSystemPrompt, attachments),
+      await buildAdapterInput(args, agent, runId, userPrompt, workspace, planToolNames, planSystemPrompt, attachments),
       signal,
     )
 
@@ -271,7 +272,7 @@ async function executeOrchestratorRun(
   const aggStream = agentRegistry
     .getAdapter(agent)
     .stream(
-      buildAdapterInput(
+      await buildAdapterInput(
         args,
         agent,
         runId,
@@ -667,7 +668,7 @@ function publish(event: StreamEvent): void {
 }
 
 // ─── Adapter 输入构造 ─────────────────────────────────────
-function buildAdapterInput(
+async function buildAdapterInput(
   args: RunArgs,
   agent: AgentRow,
   runId: string,
@@ -676,10 +677,24 @@ function buildAdapterInput(
   toolNames: string[],
   systemPromptOverride: string | undefined,
   attachments: AdapterAttachment[],
-): AdapterInput {
+): Promise<AdapterInput> {
   const effectiveCwd = getEffectiveCwd(workspace)
   const baseSystemPrompt = systemPromptOverride ?? agent.systemPrompt
   const systemPromptWithWorkspace = buildWorkspaceContextBlock(workspace) + '\n\n' + baseSystemPrompt
+
+  // Key 优先级：agent.apiKey (per-agent) > app_settings.* (用户全局自填) > adapter 内部 fallback env var
+  // 只在 per-agent 字段为空时才注入全局 settings，避免覆盖用户的精细配置
+  let effectiveApiKey = agent.apiKey
+  let effectiveApiBaseUrl = agent.apiBaseUrl
+  if (!effectiveApiKey || (!effectiveApiBaseUrl && agent.adapterName === 'claude-code')) {
+    const settings = await getAppSettings()
+    if (!effectiveApiKey) {
+      effectiveApiKey = pickSettingsKey(settings, agent)
+    }
+    if (!effectiveApiBaseUrl && agent.adapterName === 'claude-code') {
+      effectiveApiBaseUrl = settings.anthropicBaseUrl
+    }
+  }
 
   return {
     agentId: agent.id,
@@ -688,8 +703,8 @@ function buildAdapterInput(
     prompt,
     workspacePath: effectiveCwd,
     systemPrompt: systemPromptWithWorkspace,
-    apiKey: agent.apiKey,
-    apiBaseUrl: agent.apiBaseUrl,
+    apiKey: effectiveApiKey,
+    apiBaseUrl: effectiveApiBaseUrl,
     modelId: agent.modelId,
     toolNames,
     attachments: attachments.length > 0 ? attachments : undefined,
@@ -700,6 +715,26 @@ function buildAdapterInput(
             supportsVision: agent.supportsVision,
           }
         : undefined,
+  }
+}
+
+/** 按 agent 的 adapter/provider 选对应字段。Claude Code 走 anthropic，custom 按 modelProvider 走。 */
+function pickSettingsKey(
+  settings: Awaited<ReturnType<typeof getAppSettings>>,
+  agent: AgentRow,
+): string | null {
+  if (agent.adapterName === 'claude-code') return settings.anthropicApiKey
+  switch (agent.modelProvider) {
+    case 'anthropic':
+      return settings.anthropicApiKey
+    case 'openai':
+      return settings.openaiApiKey
+    case 'deepseek':
+      return settings.deepseekApiKey
+    case 'volcano-ark':
+      return settings.arkApiKey
+    default:
+      return null
   }
 }
 

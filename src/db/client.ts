@@ -3,9 +3,12 @@ import { drizzle } from 'drizzle-orm/better-sqlite3'
 import { mkdirSync } from 'node:fs'
 import path from 'node:path'
 
+import { bootstrapDatabase } from './bootstrap'
 import * as schema from './schema'
 
-const DATA_DIR = path.resolve(process.cwd(), '.agenthub-data')
+// Electron 模式下 main 进程注入 AGENTHUB_DATA_DIR 指向 userData；web / dev 走 cwd 兜底（详见 Spec 12 §5）
+const DATA_DIR =
+  process.env.AGENTHUB_DATA_DIR ?? path.resolve(process.cwd(), '.agenthub-data')
 const DB_PATH = path.join(DATA_DIR, 'agenthub.db')
 
 mkdirSync(DATA_DIR, { recursive: true })
@@ -26,6 +29,10 @@ const sqlite =
 if (!globalForDb.sqlite) {
   sqlite.pragma('journal_mode = WAL')
   sqlite.pragma('foreign_keys = ON')
+  // 同步建表 + seed 内置 agent（CREATE TABLE IF NOT EXISTS + 只在空时插入，幂等）。
+  // 打包后桌面版第一次起 server 时，userData 里只有空 DB 文件，必须在这里把 schema / 数据补齐。
+  // dev 模式 DB 已经存在，操作都是 no-op，开销可忽略。
+  bootstrapDatabase(sqlite)
   globalForDb.sqlite = sqlite
 }
 

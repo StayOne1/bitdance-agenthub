@@ -22,8 +22,8 @@ interface Agent {
   // 仅 adapterName === 'custom' 时使用
   modelProvider?: ModelProvider
   modelId?: string              // 厂商内部 model id
-  apiKey?: string               // per-agent 自定义 key；NULL 走 env var（详见 Spec 10）
-  apiBaseUrl?: string           // per-agent 自定义 API endpoint（如 anyrouter）；NULL 走 SDK 默认
+  apiKey?: string               // per-agent 自定义 key；NULL 走 app_settings → env var → OAuth（详见 Spec 05 §API key 解析、Spec 08 §8）
+  apiBaseUrl?: string           // per-agent 自定义 API endpoint（如 anyrouter）；NULL 走 app_settings.anthropicBaseUrl → env → SDK 默认
 
   toolNames: string[]           // 该 Agent 可调用的工具，引用 Spec 07
 

@@ -222,6 +222,26 @@ export interface RunUsage {
   model?: string
 }
 
+// ─── AppSettings (全局 API key / endpoint) ──────────────────
+/**
+ * 全局应用设置。单行表（PK 固定 'singleton'），存用户在「设置」面板填写的
+ * API key / base URL。优先级高于 process.env，让用户不必编辑 .env.local。
+ *
+ * 桌面版 Electron 模式下也是这张表（不引入 keychain / safeStorage 等额外存储）。
+ */
+export const appSettings = sqliteTable('app_settings', {
+  id: text('id').primaryKey(),                      // 永远 = 'singleton'
+  anthropicApiKey: text('anthropic_api_key'),       // ANTHROPIC_API_KEY 等价
+  anthropicBaseUrl: text('anthropic_base_url'),     // 第三方网关（anyrouter 等）；非空时 anthropicApiKey 作 AUTH_TOKEN
+  openaiApiKey: text('openai_api_key'),
+  deepseekApiKey: text('deepseek_api_key'),
+  arkApiKey: text('ark_api_key'),
+  updatedAt: integer('updated_at').notNull(),
+})
+
+export type AppSettingsRow = typeof appSettings.$inferSelect
+export type AppSettingsInsert = typeof appSettings.$inferInsert
+
 // ─── 类型导出（推断行类型）─────────────────────────────────
 export type AgentRow = typeof agents.$inferSelect
 export type AgentInsert = typeof agents.$inferInsert
