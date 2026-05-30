@@ -703,7 +703,10 @@ async function buildAdapterInput(
   // 按模型 contextWindow 算出 historyBudget = totalContext - outputReserve - (system+currentUser 估算) - 安全 margin。
   // 失败回退到空数组，让 agent 退化到「无历史」模式而不是整个 run 崩。详见 specs/13-conversation-context.md。
   let history: ChatCompletionMessageParam[] = []
-  if (agent.adapterName === 'custom') {
+  // Orchestrator 分派的子 agent（args.overridePrompt 已带 spec 06 的隔离上下文：
+  // recent_conversation + pinned + artifacts + task）跳过历史注入，不再重复塞一份——
+  // 既省 token，也守住 spec 06「子 agent 不看完整群聊历史」的隔离原则。普通会话轮次才注入。
+  if (agent.adapterName === 'custom' && !args.overridePrompt) {
     // 群聊（>1 agent）：history 里别 agent 的发言会被序列化成 `[名字] ...` 的 user 消息
     // （见 conversation-context.ts:renderOtherAgentAsUser）。在 system prompt 末尾追加一段说明，
     // 让当前 agent 正确解读这套前缀语义、不把别人的话当成自己的输出。先 append 再算预算，

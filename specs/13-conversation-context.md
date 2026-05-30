@@ -155,6 +155,8 @@ const history = await buildHistoryFor(agent.id, args.conversationId, {
 
 并把 `excludeMessageId` 设为当前触发的 user message id，避免触发消息被同时计入历史。
 
+被 Orchestrator 分派的 sub-agent（`args.overridePrompt` 已设）**跳过** `buildHistoryFor`——它已由 spec 06 的 `buildSubAgentPrompt` 拿到隔离上下文（`<recent_conversation>` + pinned + artifacts + task），再注入完整历史既重复烧 token、又破坏 spec 06 的隔离。只有普通会话轮次（用户直发 / @mention）才注入历史。
+
 ---
 
 ## Adapter 消费
@@ -307,5 +309,5 @@ reasoning 模型（DeepSeek R1 / OpenAI o1 等）`outputReserve` 加大到 16K-3
 
 - Spec 03（MessagePart）：本 spec 是 MessagePart → OpenAI ChatMessage 的反向映射
 - Spec 05（adapter interface）：`AdapterInput.history` 字段在 spec 05 描述
-- Spec 06（orchestrator flow）：两条上下文注入路径**当前并存、未合并**——spec 06 的 `buildSubAgentPrompt` 把最近 N 条群聊渲染成 `<recent_conversation>` XML 塞进被分派 worker 的 prompt；本 spec 的 `buildHistoryFor` 把跨 run 历史渲染成 `[名字]` 前缀的 history。custom adapter 的 sub-agent 会同时收到两者（有部分重叠，尚未去重）
+- Spec 06（orchestrator flow）：两条上下文注入路径**已分工、不重叠**——被 Orchestrator 分派的 sub-agent（`args.overridePrompt` 已设）跳过本 spec 的 `buildHistoryFor`，只用 spec 06 的 `buildSubAgentPrompt`（`<recent_conversation>` + pinned + artifacts + task）作唯一上下文；只有普通会话轮次（用户直发 / @mention）才走 `buildHistoryFor` 注入 `[名字]` 前缀历史。这同时守住了 spec 06「子 agent 不看完整群聊历史」的隔离原则
 - Spec 09（frontend）：pinned 消息的 UI 操作不变，本 spec 仅消费其结果
