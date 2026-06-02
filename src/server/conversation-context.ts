@@ -218,86 +218,9 @@ function renderSelfAssistantParts(
   parts: MessagePart[],
   artifactTitles: Map<string, string>,
 ): ChatCompletionMessageParam[] | null {
-  // 先把 parts 拆成「文本类」和「工具调用 + 对应结果」
-  const textBuf: string[] = []
-  const toolUses: Array<{ callId: string; toolName: string; args: unknown }> = []
-  const toolResults = new Map<string, { result: unknown; isError: boolean }>()
-
-  for (const p of parts) {
-    switch (p.type) {
-      case 'text':
-        if (p.content) textBuf.push(p.content)
-        break
-      case 'code':
-        if (p.content) textBuf.push(p.content)
-        break
-      case 'artifact_ref': {
-        const title = artifactTitles.get(p.artifactId) ?? ''
-        textBuf.push(title ? `[产物: ${title} (id=${p.artifactId})]` : `[产物 ${p.artifactId}]`)
-        break
-      }
-      case 'tool_use':
-        toolUses.push({ callId: p.callId, toolName: p.toolName, args: p.args })
-        break
-      case 'tool_result':
-        toolResults.set(p.callId, { result: p.result, isError: p.isError })
-        break
-      // thinking 一律丢
-      default:
-        break
-    }
-  }
-
-  // 任何 tool_use 缺对应 tool_result → 整条消息跳过（OpenAI 不接受悬挂的 tool_call_id）
-  for (const tu of toolUses) {
-    if (!toolResults.has(tu.callId)) return null
-  }
-
-  const text = textBuf.join('\n').trim()
-  const hasTools = toolUses.length > 0
-  if (!text && !hasTools) return null
-
-  const messages: ChatCompletionMessageParam[] = []
-
-  if (hasTools) {
-    // assistant message with tool_calls
-    messages.push({
-      role: 'assistant',
-      content: text || null,
-      tool_calls: toolUses.map((t) => ({
-        id: t.callId,
-        type: 'function' as const,
-        function: {
-          name: t.toolName,
-          arguments: JSON.stringify(t.args ?? {}),
-        },
-      })),
-    })
-    // each tool_call 跟一条 tool message
-    for (const t of toolUses) {
-      const r = toolResults.get(t.callId)!
-      messages.push({
-        role: 'tool',
-        tool_call_id: t.callId,
-        content: stringifyToolResult(r.result, r.isError),
-      })
-    }
-  } else {
-    // 纯文本 assistant
-    messages.push({ role: 'assistant', content: text })
-  }
-
-  return messages
-}
-
-function stringifyToolResult(result: unknown, isError: boolean): string {
-  if (typeof result === 'string') return isError ? `[error] ${result}` : result
-  try {
-    const s = JSON.stringify(result)
-    return isError ? `[error] ${s}` : s
-  } catch {
-    return isError ? '[error] (unserializable)' : '(unserializable)'
-  }
+  const text = renderAgentPublicText(parts, artifactTitles)
+  if (!text) return null
+  return [{ role: 'assistant', content: text }]
 }
 
 /**
@@ -310,6 +233,15 @@ function renderOtherAgentAsUser(
   agentName: string,
   artifactTitles: Map<string, string>,
 ): ChatCompletionMessageParam | null {
+  const text = renderAgentPublicText(parts, artifactTitles)
+  if (!text) return null
+  return { role: 'user', content: `[${agentName}] ${text}` }
+}
+
+function renderAgentPublicText(
+  parts: MessagePart[],
+  artifactTitles: Map<string, string>,
+): string {
   const buf: string[] = []
   for (const p of parts) {
     switch (p.type) {
@@ -324,14 +256,12 @@ function renderOtherAgentAsUser(
         buf.push(title ? `[产物: ${title} (id=${p.artifactId})]` : `[产物 ${p.artifactId}]`)
         break
       }
-      // thinking / tool_use / tool_result / image_attachment / file_attachment：跨 agent 视野下一律丢
+      // 跨 run 历史只保留公开输出；thinking / tool_use / tool_result 不回放。
       default:
         break
     }
   }
-  const text = buf.join('\n').trim()
-  if (!text) return null
-  return { role: 'user', content: `[${agentName}] ${text}` }
+  return buf.join('\n').trim()
 }
 
 // ─── 批量取 artifact title ───────────────────────────────

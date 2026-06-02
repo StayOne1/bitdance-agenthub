@@ -77,38 +77,22 @@ export async function buildHistoryFor(
 
 ### 自己的 assistant message（role='assistant' && agentId === currentAgentId）
 
-把 parts 数组按出现顺序处理。`thinking` 一律丢（agent 不需要看自己上轮的思考过程，且 reasoning 部分有些模型不接受回传）。
+把 parts 数组按出现顺序处理。跨 run 历史只保留公开输出；`thinking` / `tool_use` / `tool_result` 一律丢。within-run 的工具调用链仍由 adapter 内部维护，本节只处理已经落库的历史消息。
 
 收集：
 - `text` / `code` → 拼到 assistant content
 - `artifact_ref` → 折叠 `[产物: <title> (id=<artifactId>)]` 文本（需要从 artifacts 表 join 出 title；title 拿不到时退化为 `[产物 art_xxx]`）
-- `tool_use` → 收集为 `tool_calls`，pair 对应 callId 的 `tool_result`
 
 输出（按 OpenAI schema）：
 
 ```typescript
-// 主 assistant message
 {
   role: 'assistant',
-  content: '......text+code+artifact_ref 折叠后的字符串，可为 null',
-  tool_calls: [
-    {
-      id: '<callId>',
-      type: 'function',
-      function: { name: '<toolName>', arguments: '<JSON.stringify(args)>' }
-    },
-    ...
-  ]
-}
-// 每个 tool_use 紧跟一条 tool message
-{
-  role: 'tool',
-  tool_call_id: '<callId>',
-  content: '<JSON.stringify(result) | result.error 文本>'
+  content: '......text+code+artifact_ref 折叠后的字符串'
 }
 ```
 
-**注意**：tool_calls 数组里所有 callId 必须有对应 tool role message 跟随，否则 OpenAI API 报错。`buildHistoryFor` 必须保证 tool_use / tool_result 配对完整；若某个 tool_use 找不到对应 tool_result（极少情况，如 run abort 留下半截工具），跳过整条 assistant message 不进历史。
+如果公开文本为空，整条 assistant message 跳过。这样避免把上一轮 `read_artifact` / shell / fs 工具结果作为历史再次喂给模型；产物内容始终通过 `artifact_ref` id 占位并由 agent 按需 `read_artifact`。
 
 ### 别 agent 的 message（role='agent' && agentId !== currentAgentId）
 
@@ -197,7 +181,7 @@ const history = await buildHistoryFor(agent.id, args.conversationId, {
 
 群聊（`conversation.agentIds.length > 1`）下，`buildHistoryFor` 按「当前 agent 为主体」的视角返回不同视图，**无需 caller 显式传 policy**——是否注入跨 agent 文本由会话 agent 数自动判定：
 
-- **当前 agent 自己的消息**：完整还原 `assistant` + `tool_calls` + 配对的 `tool` 结果（`renderSelfAssistantParts`）。Orchestrator 自己的 `plan_tasks` 调用因此也被还原成 tool_calls。
+- **当前 agent 自己的消息**：折叠为只含公开输出的 `assistant` 消息（`renderSelfAssistantParts`）。drop thinking / tool_use / tool_result；artifact 只留 `[产物: title (id=...)]` 占位。
 - **其他成员的消息（含 Orchestrator 与其他 worker）**：折叠成 `[<Agent名>] <文本>` 的单条 `user` 消息（`renderOtherAgentAsUser`）。drop thinking / tool_use / tool_result；artifact 只留 `[产物: title (id=...)]` 占位。
 
 > 设计取舍：worker 一次写网页可能产生数 K token 的 tool_use/tool_result，别 agent 看了无意义；artifact 才是真正的跨 agent 交付物，要看内容自己 `read_artifact`。Orchestrator 同理——看 worker「最终发的话」就够决定下一步，不需要 worker 的中间过程。
@@ -283,9 +267,9 @@ reasoning 模型（DeepSeek R1 / OpenAI o1 等）`outputReserve` 加大到 16K-3
 
 **Phase A + B**：
 - [ ] 单聊：连续两轮对话，第二轮 agent 能正确引用第一轮的内容
-- [ ] 单聊：agent 上一轮用过 bash 工具，下一轮 agent 看到自己的 tool_calls 历史，不会重复运行同样的命令
+- [ ] 单聊：agent 上一轮用过 bash/read_artifact 工具，下一轮历史不回放 tool_calls/tool_result，只保留公开文本与 artifact_ref 占位
 - [ ] 单聊：把消息 pin 之后，即使发了 25+ 条新消息，pinned 那条仍在 history 里
-- [ ] 单聊：tool_use 与 tool_result 配对正确，OpenAI 没报「tool_call_id not found」之类错
+- [ ] 单聊：历史中不生成 tool role message，OpenAI 没报「tool_call_id not found」之类错
 - [ ] 单聊：artifact_ref 折叠为占位文本，agent 没把整个产物吐出来
 - [ ] 群聊：单聊路径不 crash（消息选取 / tool 配对在多 agent 下仍正确）
 - [ ] Claude Code agent：行为不变（不消费 history）
