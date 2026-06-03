@@ -1,0 +1,41 @@
+# Frontend
+
+## Purpose
+
+Defines client state, event application, and major UI boundaries. Detailed frontend notes live in `specs/09-frontend-architecture.md`.
+
+## Requirements
+
+### Requirement: Frontend SHALL consume server APIs and SSE
+
+The frontend MUST use REST routes and SSE stream events; it SHALL not import or call LLM SDKs directly.
+
+#### Scenario: User sends a message
+- **WHEN** the UI posts to the messages API
+- **THEN** server-side AgentRunner invokes the adapter
+- **AND** UI updates arrive through SSE events.
+
+### Requirement: Store reducers SHALL apply StreamEvent deterministically
+
+Zustand reducers MUST update conversation, message, artifact, pending write, dispatch, and usage state from `StreamEvent` payloads.
+
+#### Scenario: `part.delta` arrives
+- **WHEN** the event references an existing part
+- **THEN** the store appends content to that part without reordering other parts.
+
+### Requirement: Artifact preview SHALL be separate from chat rendering
+
+The UI MUST render artifact previews in a dedicated panel and render chat artifact references as cards or links.
+
+#### Scenario: User clicks artifact ref
+- **WHEN** an `artifact_ref` part is selected
+- **THEN** the preview panel opens the referenced artifact.
+
+### Requirement: Agent builder SHALL expose adapter-specific fields
+
+Create/edit agent UI MUST show provider, model, tool, key, and base URL fields according to selected adapter semantics.
+
+#### Scenario: User selects Codex adapter
+- **WHEN** `adapterKind='codex'`
+- **THEN** provider and AgentHub tool checkboxes are hidden
+- **AND** Base URL copy says it must support Codex/Responses.

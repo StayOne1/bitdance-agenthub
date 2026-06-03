@@ -159,7 +159,16 @@ Sidebar 顶部齿轮 → 「API 设置」，填 Anthropic / OpenAI / DeepSeek / 
 
 ---
 
-## 📚 项目规格（specs/）
+## 📚 项目规格
+
+OpenSpec 契约在 `openspec/`：
+
+| 路径 | 内容 |
+|---|---|
+| `openspec/project.md` | 项目上下文、技术栈、OpenSpec 与旧 specs 的映射 |
+| `openspec/specs/*/spec.md` | 按 capability 拆分的 SHALL/MUST + Scenario 可校验规格 |
+
+编号版详细规格保留在 `specs/`：
 
 | Spec | 内容 |
 |---|---|
@@ -175,6 +184,7 @@ Sidebar 顶部齿轮 → 「API 设置」，填 Anthropic / OpenAI / DeepSeek / 
 | `10-agent-builder.md` | 自建 Agent 流程 |
 | `11-platform.md` | 平台抽象（POSIX / Windows shell、命令黑名单、路径校验、子进程清理） |
 | `12-desktop-electron.md` | 桌面版（Electron 打包 DMG / EXE） |
+| `13-conversation-context.md` | 跨 run 对话历史序列化、pinned 注入、context compact |
 | `14-mobile-remote.md` | 移动端伴随 App（Capacitor / Tailscale / 远程审批） |
 
 AI 协作约定见 `CLAUDE.md`。
