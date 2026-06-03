@@ -2,7 +2,7 @@
 
 > 这是 AgentHub 项目的「项目级 AI 协作约定」。任何 AI 协作工具（Claude Code、Cursor、Codex 等）在本项目工作时**必须**先读此文档，再开始任务。
 >
-> 本文档与 `specs/` 目录配套：CLAUDE.md 定**规则**（怎么做、不做什么），`specs/` 定**规格**（要做什么）。
+> 本文档与 `openspec/`、`specs/` 配套：CLAUDE.md 定**规则**（怎么做、不做什么），`openspec/specs/` 定 OpenSpec 能力契约，`specs/` 保留编号版详细规格。
 >
 > **新会话快速上手**：想在不通读代码的前提下建立项目全貌（已实现功能 + 代码地图 + 当前进度），先读根目录 `OVERVIEW.md` —— 它定**地图**（做了什么 / 代码在哪），本文档定**规则**。
 
@@ -39,7 +39,7 @@
 | ORM | Drizzle | 不用 Prisma |
 | DB | SQLite（`better-sqlite3` 驱动） | 不引入 Postgres/MySQL |
 | 流式传输 | SSE（一条全局连接） | 不用 WebSocket |
-| AI SDK | `@anthropic-ai/sdk`、`@anthropic-ai/claude-agent-sdk`、`openai`；CodexAdapter 实装时引入 `@openai/codex-sdk`（当前未安装） | 通过适配器层屏蔽差异 |
+| AI SDK | `@anthropic-ai/sdk`、`@anthropic-ai/claude-agent-sdk`、`openai`、`@openai/codex-sdk` | 通过适配器层屏蔽差异 |
 | 包管理 | pnpm | 不用 npm/yarn（lockfile 唯一） |
 | Node 版本 | ≥ 20 | 用 `node --experimental-strip-types` 跑 TS 脚本时需要 |
 
@@ -174,6 +174,8 @@ Key 来源按优先级（详见 `src/server/settings-service.ts` 与 `src/server
 2. **`app_settings.<provider>_api_key`** — 用户在「设置」面板（Sidebar 齿轮）全局自填，存 SQLite `app_settings` 单行表
 3. **`process.env.<PROVIDER>_API_KEY`** — `.env.local` 兜底（dev / CI 友好）
 
+Codex adapter 额外约束：运行时 `CODEX_HOME` / `CODEX_SQLITE_HOME` 指向 AgentHub dataDir 下的隔离目录，不默认读取用户本机 `~/.codex`，避免 CC Switch 等外部 Codex 配置影响 AgentHub。Codex 的自定义 `apiBaseUrl` 必须是 Codex/Responses 兼容 endpoint；DeepSeek 等 Chat Completions-only provider 走 CustomAgentAdapter。
+
 约束：
 
 - **绝不**在代码中硬编码 key
@@ -191,7 +193,7 @@ Key 来源按优先级（详见 `src/server/settings-service.ts` 与 `src/server
 
 | 模式 | 何时进入 | 行为 |
 |---|---|---|
-| **Spec 驱动** | 接到「实现 X」类需求 | 先读 `specs/` 找对应 spec，按 spec 实现。spec 缺失时**先写 spec**，让人确认后再写代码 |
+| **Spec 驱动** | 接到「实现 X」类需求 | 先读 `openspec/project.md` 与 `openspec/specs/` 找对应 capability，再读 `specs/` 细节。spec 缺失时**先写 OpenSpec 变更/规格**，让人确认后再写代码 |
 | **修复驱动** | 接到「修 bug」类需求 | 先定位根因（不是症状）。写修复前在 task / PR 说明根因 |
 | **探索驱动** | 接到「研究 / 设计 X」类需求 | 不写实现代码，输出 spec / 设计文档 |
 
@@ -262,7 +264,25 @@ Key 来源按优先级（详见 `src/server/settings-service.ts` 与 `src/server
 
 ## 8. Specs 与 Skills 索引
 
-### `specs/`（项目规格）
+### `openspec/`（项目规格契约）
+
+- `project.md` — 项目上下文、技术栈、OpenSpec 与旧 specs 映射
+- `specs/core-domain/spec.md` — 核心实体和边界
+- `specs/stream-events/spec.md` — StreamEvent 协议
+- `specs/message-parts/spec.md` — MessagePart 结构
+- `specs/artifacts/spec.md` — Artifact 生命周期
+- `specs/adapters/spec.md` — Adapter 契约与 Claude/Codex/Custom 边界
+- `specs/orchestrator/spec.md` — Orchestrator 调度
+- `specs/tools/spec.md` — 工具系统与审批
+- `specs/persistence/spec.md` — SQLite/Drizzle 持久化
+- `specs/frontend/spec.md` — 前端状态与渲染
+- `specs/agent-builder/spec.md` — Agent 创建/编辑
+- `specs/platform-security/spec.md` — 平台安全与命令黑名单
+- `specs/desktop-electron/spec.md` — Electron 桌面版
+- `specs/conversation-context/spec.md` — 跨 run 上下文
+- `specs/mobile-companion/spec.md` — 移动伴随 App
+
+### `specs/`（编号版详细规格）
 
 - `01-core-entities.md` — 7 个核心实体的字段定义
 - `02-stream-events.md` — StreamEvent 完整事件类型
@@ -277,6 +297,7 @@ Key 来源按优先级（详见 `src/server/settings-service.ts` 与 `src/server
 - `11-platform.md` — 平台抽象（POSIX / Windows shell 选择、双平台黑名单、子进程清理）
 - `12-desktop-electron.md` — 桌面版（Electron 打包 DMG / EXE，进程模型 / 路径迁移）
 - `13-conversation-context.md` — 跨 run 对话历史序列化（MessagePart → OpenAI ChatMessage、pinned 注入、agent 视角）
+- `14-mobile-remote.md` — 移动端伴随 App（Capacitor / Tailscale / 远程审批）
 
 ### `skills/`（可复用开发任务模板）
 
