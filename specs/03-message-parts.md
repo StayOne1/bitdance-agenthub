@@ -121,7 +121,7 @@ Agent 的主要文字输出。content 是 markdown 文本，前端用 `react-mar
 { type: 'deploy_status', deployment: DeployStatusRecord }
 ```
 
-展示一次 web_app 部署预览状态。`status='ready'` 时卡片提供打开 / 复制预览 URL；`status='failed'` 时展示失败原因。
+展示一次 web_app 部署状态。`status='ready'` 时卡片提供打开 / 复制预览 URL；本地静态发布记录还提供源码包 / 容器包下载；`status='failed'` 时展示失败原因。
 
 **注入路径**：Adapter 在 `deploy_artifact` 成功返回部署记录后 emit `deploy.status`，AgentRunner 在当前 message 末尾 push `deploy_status` 并补发 `part.start`。
 
@@ -194,7 +194,7 @@ function PartList({ parts }) {
 | `tool_use` | `<ToolUsePart>` | 合并 tool_result 渲染 |
 | `tool_result` | （跳过） | 由 ToolUsePart 吸收 |
 | `artifact_ref` | `<ArtifactRefPart>` | 卡片，lazy fetch |
-| `deploy_status` | `<DeployStatusPart>` | 部署状态卡，ready 时带打开/复制 |
+| `deploy_status` | `<DeployStatusPart>` | 部署状态卡，ready 时带打开/复制，存在下载路径时带源码包/容器包下载 |
 | `image_attachment` | `<AttachmentChip context="message">` | 图片缩略 |
 | `file_attachment` | `<AttachmentChip context="message">` | 文件 chip |
 
@@ -223,7 +223,7 @@ LLM 下一轮 turn 需要 history（assistant 的旧消息回传 messages 数组
 | `tool_use` | `[调用 <toolName>(<args 摘要>)]` |
 | `tool_result` | `[<toolName> 结果: <result 摘要>]` |
 | `artifact_ref` | `[产物: art_xxx]` |
-| `deploy_status` | `[部署预览: title vN (/api/artifacts/.../preview)]` 或 `[部署失败: ...]` |
+| `deploy_status` | `[部署预览: title vN (/deployments/dep_xxx)]` 或 `[部署失败: ...]` |
 | 附件 | `[图片附件: <fileName>]` / `[文件附件: <fileName>]` |
 
 具体实现见 `agent-runner.ts` 的 `extractTextFromParts`（拼回字符串） + `buildMessagesForLLM`（构造 OpenAI format）。

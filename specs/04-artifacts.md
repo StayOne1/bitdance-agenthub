@@ -2,7 +2,7 @@
 
 > Artifact 是 Agent 产出的「可独立预览的产物」：网页 / 代码 / 文档 / 图片 / diff。**与 Message 解耦**，有独立的生命周期、版本、二次编辑。**修改 ArtifactContent 结构需先讨论。**
 
-源文件：`src/shared/types.ts`、`src/db/schema.ts`、`src/server/artifact-service.ts`、`src/components/artifact-preview-panel.tsx`、`src/server/tools/write-artifact.ts`、`src/server/tools/deploy-artifact.ts`
+源文件：`src/shared/types.ts`、`src/db/schema.ts`、`src/server/artifact-service.ts`、`src/server/deployment-service.ts`、`src/components/artifact-preview-panel.tsx`、`src/server/tools/write-artifact.ts`、`src/server/tools/deploy-artifact.ts`
 
 ---
 
@@ -158,9 +158,19 @@ store.previewArtifactId → ArtifactPreviewPanel
 
 ### 一键预览 URL
 
-`GET /api/artifacts/:id/preview` 只服务 `web_app` artifact，返回 `text/html`，并设置 CSP sandbox / `nosniff` / `no-store`。前端 artifact 卡和部署状态卡用该路径生成当前 origin 下的完整预览 URL。
+`GET /api/artifacts/:id/preview` 只服务 `web_app` artifact，返回 `text/html`，并设置 CSP sandbox / `nosniff` / `no-store`。前端 artifact 卡与 ArtifactPreviewPanel 顶部直接使用该实时预览路径。
 
-`deploy_artifact` 不做外部托管，返回本地预览部署记录：
+`deploy_artifact` 不做外部托管，但会生成本地静态发布目录：
+
+```
+.agenthub-data/deployments/dep_xxx/
+  index.html                  # 运行态 HTML，继承 buildWebAppHtml 注入效果
+  ...                         # 对外可服务的静态资源
+  .agenthub/manifest.json     # AgentHub 私有发布元数据
+  .agenthub/source/**         # 原始 artifact source，用于源码包下载
+```
+
+成功返回的 `DeployStatusRecord.previewPath` 指向稳定 `/deployments/:id`，并提供源码包与容器包下载路径：
 
 ```typescript
 {
@@ -168,12 +178,23 @@ store.previewArtifactId → ArtifactPreviewPanel
   artifactId: 'art_xxx',
   title: string,
   version: number,
-  previewPath: '/api/artifacts/art_xxx/preview',
+  previewPath: '/deployments/dep_xxx',
   status: 'ready' | 'failed',
+  deploymentType?: 'local_static',
+  deploymentPath?: '/deployments/dep_xxx',
+  sourceDownloadPath?: '/api/deployments/dep_xxx/download/source',
+  containerDownloadPath?: '/api/deployments/dep_xxx/download/container',
+  summaryInstruction?: string,
   error?: string,
   createdAt: number
 }
 ```
+
+`summaryInstruction` 只给 Agent 看，用于约束最终文字总结：`previewPath` 是当前 AgentHub 实例下的相对路径，Agent 不得把它改写成公网域名或自造完整 URL。UI 展示仍以结构化部署卡片为准。
+
+`GET /deployments/:id/[[...path]]` 只从该 deployment 目录读文件，拒绝访问 `.agenthub` 私有目录和路径逃逸。HTML 响应继续设置 CSP `sandbox allow-scripts` / `nosniff` / `no-store`。
+
+`GET /api/deployments/:id/download/source` 返回原始 source ZIP；`/container` 返回含 `Dockerfile` / `nginx.conf` / 静态文件的容器 ZIP。
 
 ### document
 

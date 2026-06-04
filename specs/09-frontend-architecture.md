@@ -245,7 +245,7 @@ app/page.tsx
 
 **404 行为**：artifact lazy fetch 404 → 渲染「产物已删除」墓碑卡片（不在 store 标记 deleted；用组件 local state）。
 
-`web_app` artifact 卡、ArtifactPreviewPanel 顶部和 `deploy_status` 卡都提供打开 / 复制预览 URL。URL 由当前 `window.location.origin + previewPath` 生成，避免把 dev 端口或 packaged 随机端口持久化进消息。
+`web_app` artifact 卡、ArtifactPreviewPanel 顶部和 `deploy_status` 卡都提供打开 / 复制预览 URL。URL 由当前 `window.location.origin + previewPath` 生成，避免把 dev 端口或 packaged 随机端口持久化进消息。ready 的本地静态发布卡如果带 `sourceDownloadPath` / `containerDownloadPath`，还展示源码包与容器包下载按钮。
 
 ---
 

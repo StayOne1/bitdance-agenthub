@@ -59,7 +59,7 @@ L1 Persistence                          src/db/**（Drizzle+SQLite） + workspac
 | 自建 Agent | ✅ | 表单/对话式创建,自定义 prompt + 工具集 |
 | Orchestrator 编排 | ✅ | 三阶段规划 + DAG 调度 + 级联中止 + 可视化卡 |
 | 工具系统 | ✅ | write/deploy/read_artifact · read_attachment · fs_read/fs_write/bash · plan_tasks · ask_user |
-| Artifact 预览/编辑 | ✅ | web_app(iframe + preview URL) / document(md) / image / diff 双栏 · code_file workspace 预览/编辑 · 版本链 v1↔v2 · 选区改写 · 面板内编辑(CodeMirror)→提交新版本 · 导出 |
+| Artifact 预览/编辑 | ✅ | web_app(iframe + preview URL + 本地静态发布/源码包/容器包) / document(md) / image / diff 双栏 · code_file workspace 预览/编辑 · 版本链 v1↔v2 · 选区改写 · 面板内编辑(CodeMirror)→提交新版本 · 导出 |
 | Workspace 沙箱 | ✅ | sandbox/local 双模式 · fs_write 审批(Review/Auto) · 双平台 Bash 黑名单 |
 | Token 计量 | ✅ | per-run/per-message · cache 命中率 · 全局分析 Tab |
 | 跨 run 对话记忆 | ✅ | 历史序列化注入 · token 预算 · 群聊跨 agent 可见 · 手动压缩 |
@@ -109,7 +109,8 @@ L1 Persistence                          src/db/**（Drizzle+SQLite） + workspac
 | `stream/route.ts` | **SSE 全局事件流**（一条连接） |
 | `conversations/route.ts` · `conversations/[id]/**` | 会话 CRUD · 消息 · `fs/{listdir,read,write}` · `pending-writes` · `pending-questions` · `attachments` · `regenerate` |
 | `messages/[id]/{edit,pin,bookmark,withdraw}` | 消息操作 |
-| `agents/**` · `artifacts/**`（含 `/versions` `/export`） · `attachments/**` | 实体 CRUD |
+| `agents/**` · `artifacts/**`（含 `/versions` `/export`） · `deployments/**` · `attachments/**` | 实体 CRUD / 部署包下载 |
+| `deployments/[id]/[[...path]]` | 本地静态发布预览 URL |
 | `runs/[id]/abort` | 中止 run（级联） |
 | `usage/summary` | Token 分析聚合 |
 | `platform` · `fs/listdir` | 平台信息 · 全局目录浏览 |
@@ -122,7 +123,7 @@ L1 Persistence                          src/db/**（Drizzle+SQLite） + workspac
 | 跨 run 上下文 | `conversation-context.ts` | MessagePart → ChatMessage 序列化、pinned 注入（`specs/13`） |
 | 上下文压缩 | `context-compaction-service.ts` | 手动压缩历史为摘要（落 `context_summaries` 表） |
 | 事件总线 | `event-bus.ts` | HMR-safe globalThis 单例,推 SSE |
-| 产物服务 | `artifact-service.ts` | 产物 CRUD + 版本链（parentArtifactId） |
+| 产物服务 | `artifact-service.ts` · `deployment-service.ts` | 产物 CRUD + 版本链（parentArtifactId）· 本地静态发布与下载包 |
 | Agent / 附件 / 文件 | `agent-service.ts` · `attachment-service.ts` · `fs-service.ts` | |
 | 审批中转 store | `pending-writes.ts` · `pending-questions.ts` | fs_write 审批 / ask_user 的内存中转 |
 | 设置 / Key | `settings-service.ts` | 三层 key 优先级解析 |
