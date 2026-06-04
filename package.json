@@ -8,6 +8,8 @@
     "build": "node scripts/run-electron-node.mjs node_modules/next/dist/bin/next build",
     "start": "node scripts/run-electron-node.mjs node_modules/next/dist/bin/next start",
     "lint": "eslint",
+    "test": "vitest run",
+    "test:watch": "vitest",
     "typecheck": "tsc --noEmit",
     "db:generate": "node scripts/run-electron-node.mjs node_modules/drizzle-kit/bin.cjs generate",
     "db:push": "node scripts/run-electron-node.mjs node_modules/drizzle-kit/bin.cjs push --force",
@@ -76,6 +78,7 @@
     "tailwindcss": "^4",
     "tsx": "^4.22.3",
     "typescript": "^5",
+    "vitest": "^4.1.8",
     "wait-on": "^9.0.10"
   },
   "pnpm": {
