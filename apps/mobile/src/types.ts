@@ -36,6 +36,14 @@ export type MobileMessagePart =
   | { type: 'tool_use'; callId: string; toolName: string }
   | { type: 'tool_result'; callId: string; isError: boolean }
   | { type: 'artifact_ref'; artifactId: string }
+  | {
+      type: 'deploy_status'
+      title: string
+      version: number
+      previewPath: string
+      status: 'ready' | 'failed'
+      error?: string
+    }
   | { type: 'attachment'; fileName: string; kind: 'image' | 'file' }
 
 export type MobileArtifactType = 'web_app' | 'code_file' | 'diff' | 'document' | 'image'

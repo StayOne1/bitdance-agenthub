@@ -11,8 +11,18 @@ const eslintConfig = defineConfig([
     ".next/**",
     "out/**",
     "build/**",
+    "dist-electron/**",
+    "release/**",
+    "apps/mobile/android/**/build/**",
+    "apps/mobile/android/app/src/main/assets/**",
+    "apps/mobile/dist/**",
     "next-env.d.ts",
   ]),
+  {
+    rules: {
+      "react-hooks/set-state-in-effect": "off",
+    },
+  },
 ]);
 
 export default eslintConfig;

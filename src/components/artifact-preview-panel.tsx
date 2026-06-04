@@ -1,22 +1,37 @@
 'use client'
 
-import { ChevronRight, Clock, Code, Download, Eye, FileText, History, Image as ImageIcon, Layers, X } from 'lucide-react'
-import { useCallback, useEffect, useState } from 'react'
+import { ChevronRight, Clock, Code, Copy, Download, ExternalLink, Eye, FileText, History, Image as ImageIcon, Layers, Pencil, RotateCcw, Save, X } from 'lucide-react'
+import dynamic from 'next/dynamic'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 
 import { Markdown } from '@/components/markdown'
 import { Button } from '@/components/ui/button'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import type { ArtifactRow } from '@/db/schema'
-import { fetchArtifactVersions } from '@/lib/api'
+import { createArtifactVersion, fetchArtifactVersions } from '@/lib/api'
+import { artifactPreviewPath } from '@/lib/artifact-preview'
 import { cn } from '@/lib/utils'
 import type { ArtifactContent } from '@/shared/types'
 import { useAppStore } from '@/stores/app-store'
+
+// 编辑器仅在用户点「编辑」时懒加载（重型 client 库；CodeMirror 无 worker、离线 OK）
+const ArtifactCodeEditor = dynamic(() => import('./artifact-code-editor'), {
+  ssr: false,
+  loading: () => (
+    <div className="flex size-full items-center justify-center p-4 text-xs text-muted-foreground">
+      编辑器加载中…
+    </div>
+  ),
+})
+
+type SaveVersionFn = (rawContent: unknown, title?: string) => Promise<void>
 
 /**
  * ArtifactPreviewPanel — 右侧滑入的产物预览面板。
  *
  * 由 store.previewArtifactId 控制显隐。按 artifact.type 分发到不同 view。
  * 顶部支持多版本切换：从同一个 root 派生的所有 artifact 通过 /versions API 查回。
+ * web_app / document 支持面板内编辑并「提交为新版本」（POST /versions → createArtifactVersion）。
  */
 export function ArtifactPreviewPanel() {
   const id = useAppStore((s) => s.previewArtifactId)
@@ -59,6 +74,17 @@ export function ArtifactPreviewPanel() {
     [id, openPreview],
   )
 
+  // 提交编辑后的内容为新版本，成功后切到新版本（版本条经 id effect 自动刷新）
+  const handleSaveVersion = useCallback<SaveVersionFn>(
+    async (rawContent, title) => {
+      if (!id) return
+      const row = await createArtifactVersion(id, { content: rawContent, title })
+      upsertArtifact(row)
+      openPreview(row.id)
+    },
+    [id, upsertArtifact, openPreview],
+  )
+
   if (!id || !artifact) return null
 
   const versionCount = versions?.length ?? 0
@@ -87,6 +113,26 @@ export function ArtifactPreviewPanel() {
             >
               <History className="size-4" />
             </Button>
+          )}
+          {artifact.type === 'web_app' && (
+            <>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => openPreviewInNewTab(artifact.id)}
+                title="打开预览 URL"
+              >
+                <ExternalLink className="size-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant="ghost"
+                onClick={() => copyPreviewUrl(artifact.id)}
+                title="复制预览 URL"
+              >
+                <Copy className="size-4" />
+              </Button>
+            </>
           )}
           <a
             href={`/api/artifacts/${artifact.id}/export`}
@@ -143,13 +189,19 @@ export function ArtifactPreviewPanel() {
         </div>
       )}
 
-      <ArtifactView artifact={artifact} />
+      <ArtifactView artifact={artifact} onSaveVersion={handleSaveVersion} />
     </aside>
   )
 }
 
 // ─── 调度 ──────────────────────────────────────────────
-function ArtifactView({ artifact }: { artifact: ArtifactRow }) {
+function ArtifactView({
+  artifact,
+  onSaveVersion,
+}: {
+  artifact: ArtifactRow
+  onSaveVersion: SaveVersionFn
+}) {
   const content = artifact.content as ArtifactContent
 
   // 用 data-selection-target 标记容器：SelectionPopover 会响应这里的文字选择
@@ -166,9 +218,9 @@ function ArtifactView({ artifact }: { artifact: ArtifactRow }) {
 
   switch (content.type) {
     case 'web_app':
-      return wrap(<WebAppView content={content} />)
+      return wrap(<WebAppView artifactId={artifact.id} content={content} onSaveVersion={onSaveVersion} />)
     case 'document':
-      return wrap(<DocumentView content={content} />)
+      return wrap(<DocumentView content={content} onSaveVersion={onSaveVersion} />)
     case 'image':
       return <ImageView content={content} />
     case 'code_file':
@@ -184,13 +236,51 @@ function ArtifactView({ artifact }: { artifact: ArtifactRow }) {
   }
 }
 
-// ─── web_app: iframe + 源码 ───────────────────────────
-function WebAppView({ content }: { content: Extract<ArtifactContent, { type: 'web_app' }> }) {
-  const [view, setView] = useState<'render' | 'source'>('render')
+// ─── web_app: iframe + 源码 + 编辑 ─────────────────────
+function WebAppView({
+  artifactId,
+  content,
+  onSaveVersion,
+}: {
+  artifactId: string
+  content: Extract<ArtifactContent, { type: 'web_app' }>
+  onSaveVersion: SaveVersionFn
+}) {
+  const [view, setView] = useState<'render' | 'source' | 'edit'>('render')
   const [activeFile, setActiveFile] = useState<string>(content.entry)
+  const [draftFiles, setDraftFiles] = useState<Record<string, string>>(content.files)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   const fileNames = Object.keys(content.files)
-  const html = buildIframeHtml(content.files, content.entry)
+
+  // 切版本/产物（content 每行是新对象）时重置编辑态
+  useEffect(() => {
+    setDraftFiles(content.files)
+    setActiveFile(content.entry)
+    setView('render')
+    setSaving(false)
+    setError(null)
+  }, [content])
+
+  const dirty = useMemo(
+    () => JSON.stringify(draftFiles) !== JSON.stringify(content.files),
+    [draftFiles, content.files],
+  )
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await onSaveVersion({ files: draftFiles, entry: content.entry })
+      // 成功后面板切到新版本，本视图随 content 变化自动重置
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '提交失败')
+      setSaving(false)
+    }
+  }
+
+  const showFilePicker = (view === 'source' || view === 'edit') && fileNames.length > 1
 
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -204,8 +294,12 @@ function WebAppView({ content }: { content: Extract<ArtifactContent, { type: 'we
             <Code className="size-3.5" />
             源码
           </ViewTab>
+          <ViewTab active={view === 'edit'} onClick={() => setView('edit')}>
+            <Pencil className="size-3.5" />
+            编辑
+          </ViewTab>
         </div>
-        {view === 'source' && fileNames.length > 1 && (
+        {showFilePicker && (
           <select
             value={activeFile}
             onChange={(e) => setActiveFile(e.target.value)}
@@ -221,38 +315,118 @@ function WebAppView({ content }: { content: Extract<ArtifactContent, { type: 'we
       </div>
 
       <div className="min-h-0 flex-1">
-        {view === 'render' ? (
+        {view === 'render' && (
           <iframe
-            key={html.length}
-            srcDoc={html}
+            key={artifactId}
+            src={artifactPreviewPath(artifactId)}
             sandbox="allow-scripts"
             className="size-full border-0 bg-white"
             title="Artifact preview"
           />
-        ) : (
+        )}
+        {view === 'source' && (
           <ScrollArea className="size-full">
             <pre className="overflow-x-auto p-4 text-xs leading-relaxed">
               <code>{content.files[activeFile] ?? ''}</code>
             </pre>
           </ScrollArea>
         )}
+        {view === 'edit' && (
+          <ArtifactCodeEditor
+            value={draftFiles[activeFile] ?? ''}
+            onChange={(next) => setDraftFiles((d) => ({ ...d, [activeFile]: next }))}
+            filename={activeFile}
+            type="web_app"
+          />
+        )}
       </div>
+
+      {view === 'edit' && (
+        <EditFooter
+          dirty={dirty}
+          saving={saving}
+          error={error}
+          onSave={save}
+          onReset={() => {
+            setDraftFiles(content.files)
+            setActiveFile(content.entry)
+            setError(null)
+          }}
+        />
+      )}
     </div>
   )
 }
 
-// ─── document ──────────────────────────────────────────
+// ─── document: 预览 + 编辑 ─────────────────────────────
 function DocumentView({
   content,
+  onSaveVersion,
 }: {
   content: Extract<ArtifactContent, { type: 'document' }>
+  onSaveVersion: SaveVersionFn
 }) {
+  const [view, setView] = useState<'render' | 'edit'>('render')
+  const [draft, setDraft] = useState(content.content)
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    setDraft(content.content)
+    setView('render')
+    setSaving(false)
+    setError(null)
+  }, [content])
+
+  const dirty = draft !== content.content
+
+  const save = async () => {
+    setSaving(true)
+    setError(null)
+    try {
+      await onSaveVersion({ content: draft })
+    } catch (e) {
+      setError(e instanceof Error ? e.message : '提交失败')
+      setSaving(false)
+    }
+  }
+
   return (
-    <ScrollArea className="min-h-0 flex-1">
-      <div className="mx-auto max-w-3xl px-6 py-6">
-        <Markdown>{content.content}</Markdown>
+    <div className="flex min-h-0 flex-1 flex-col">
+      <div className="flex shrink-0 border-b px-2">
+        <ViewTab active={view === 'render'} onClick={() => setView('render')}>
+          <Eye className="size-3.5" />
+          预览
+        </ViewTab>
+        <ViewTab active={view === 'edit'} onClick={() => setView('edit')}>
+          <Pencil className="size-3.5" />
+          编辑
+        </ViewTab>
       </div>
-    </ScrollArea>
+      <div className="min-h-0 flex-1">
+        {view === 'render' ? (
+          <ScrollArea className="size-full">
+            <div className="mx-auto max-w-3xl px-6 py-6">
+              <Markdown>{content.content}</Markdown>
+            </div>
+          </ScrollArea>
+        ) : (
+          <ArtifactCodeEditor value={draft} onChange={setDraft} filename="document.md" type="document" />
+        )}
+      </div>
+      {view === 'edit' && (
+        <EditFooter
+          dirty={dirty}
+          saving={saving}
+          error={error}
+          onSave={save}
+          onReset={() => {
+            setDraft(content.content)
+            setError(null)
+          }}
+        />
+      )}
+    </div>
   )
 }
 
@@ -293,6 +467,40 @@ function CodeFileView({
 }
 
 // ─── 共享小组件 ───────────────────────────────────────
+function EditFooter({
+  dirty,
+  saving,
+  error,
+  onSave,
+  onReset,
+}: {
+  dirty: boolean
+  saving: boolean
+  error: string | null
+  onSave: () => void
+  onReset: () => void
+}) {
+  return (
+    <div className="flex shrink-0 items-center gap-2 border-t px-3 py-2">
+      <Button size="sm" disabled={!dirty || saving} onClick={onSave}>
+        <Save className="size-3.5" />
+        {saving ? '提交中…' : '提交为新版本'}
+      </Button>
+      <Button size="sm" variant="ghost" disabled={!dirty || saving} onClick={onReset}>
+        <RotateCcw className="size-3.5" />
+        重置
+      </Button>
+      {error ? (
+        <span className="truncate text-xs text-red-600 dark:text-red-400">{error}</span>
+      ) : (
+        <span className="text-xs text-muted-foreground">
+          {dirty ? '已修改 · 提交将创建新版本' : '编辑后提交为新版本'}
+        </span>
+      )}
+    </div>
+  )
+}
+
 function ViewTab({
   active,
   onClick,
@@ -335,36 +543,11 @@ function TypeIcon({ type }: { type: string }) {
   return <Layers className="size-4 text-muted-foreground" />
 }
 
-// ─── iframe HTML 构造 ────────────────────────────────
-function buildIframeHtml(files: Record<string, string>, entry: string): string {
-  const html = files[entry] ?? files['index.html'] ?? ''
-  const css = files['style.css'] ?? files['styles.css'] ?? ''
-  const js = files['script.js'] ?? files['main.js'] ?? files['app.js'] ?? ''
+function openPreviewInNewTab(artifactId: string): void {
+  window.open(artifactPreviewPath(artifactId), '_blank', 'noopener,noreferrer')
+}
 
-  const styleTag = css ? `<style>\n${css}\n</style>` : ''
-  // JSON.stringify 把代码作为字符串塞进 <script>，避免里面出现 </script> 把外层标签提前关掉
-  const scriptTag = js
-    ? `<script>(function(){\n${js}\n})();<` + '/script>'
-    : ''
-
-  // 如果是完整 HTML 文档，在 </head> 前插 style，</body> 前插 script
-  if (/<\/head>/i.test(html)) {
-    return html.replace(/<\/head>/i, `${styleTag}\n</head>`).replace(/<\/body>/i, `${scriptTag}\n</body>`)
-  }
-
-  // 片段：包一层完整文档
-  return [
-    '<!doctype html>',
-    '<html lang="zh-CN">',
-    '<head>',
-    '<meta charset="utf-8">',
-    '<meta name="viewport" content="width=device-width,initial-scale=1">',
-    styleTag,
-    '</head>',
-    '<body>',
-    html,
-    scriptTag,
-    '</body>',
-    '</html>',
-  ].join('\n')
+function copyPreviewUrl(artifactId: string): void {
+  const url = new URL(artifactPreviewPath(artifactId), window.location.origin).toString()
+  navigator.clipboard?.writeText(url).catch(() => {})
 }

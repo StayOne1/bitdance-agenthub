@@ -55,11 +55,11 @@ L1 Persistence                          src/db/**（Drizzle+SQLite） + workspac
 | ClaudeCodeAdapter | ✅ | claude-agent-sdk + 全套工具 + Session 续接 |
 | CustomAgentAdapter | ✅ | OpenAI 兼容（DeepSeek/OpenAI/火山方舟）+ 自驱 tool loop |
 | MockAdapter | ✅ | 开发期不烧 token |
-| CodexAdapter | ⏳ | 待接入（暂用 CustomAgent 走 OpenAI 协议替代） |
+| CodexAdapter | ✅ | @openai/codex-sdk + 线程续接 + AgentHub MCP bridge |
 | 自建 Agent | ✅ | 表单/对话式创建,自定义 prompt + 工具集 |
 | Orchestrator 编排 | ✅ | 三阶段规划 + DAG 调度 + 级联中止 + 可视化卡 |
-| 工具系统 | ✅ | write/read_artifact · read_attachment · fs_read/fs_write/bash · plan_tasks · ask_user |
-| Artifact 预览/编辑 | ✅ | web_app(iframe) / document(md) / image · 版本链 v1↔v2 · 选区改写 · 导出 |
+| 工具系统 | ✅ | write/deploy/read_artifact · read_attachment · fs_read/fs_write/bash · plan_tasks · ask_user |
+| Artifact 预览/编辑 | ✅ | web_app(iframe + preview URL) / document(md) / image · 版本链 v1↔v2 · 选区改写 · 面板内编辑(CodeMirror)→提交新版本 · 导出 |
 | Workspace 沙箱 | ✅ | sandbox/local 双模式 · fs_write 审批(Review/Auto) · 双平台 Bash 黑名单 |
 | Token 计量 | ✅ | per-run/per-message · cache 命中率 · 全局分析 Tab |
 | 跨 run 对话记忆 | ✅ | 历史序列化注入 · token 预算 · 群聊跨 agent 可见 · 手动压缩 |
@@ -68,7 +68,7 @@ L1 Persistence                          src/db/**（Drizzle+SQLite） + workspac
 | 全局 API Key 设置面板 | ✅ | app_settings 单行表 · 三层 key 优先级 |
 | 移动端伴随 App | ⏳ | 响应式 Web 已适配;Capacitor 原生壳脚手架已建,配对通信待打通 |
 | 斜杠命令菜单 | 🚧 | 进行中(未提交),见附录 |
-| 测试覆盖 | ❌ | 待补 |
+| 测试覆盖 | 🟡 | Vitest 覆盖 security / workspace-utils / dispatch-plan 核心纯函数；UI/E2E 待补 |
 
 ---
 
@@ -171,11 +171,11 @@ DB 文件：`.agenthub-data/agenthub.db`;workspace：`.agenthub-data/workspaces/
 - 目前是纯前端 UI 命令（打开设置 / 打开 Agents 库）
 
 ### 📋 待办（README「已知限制」）
-- Codex adapter 集成
+- Codex 写盘审批 hook（当前 Review 模式用 read-only sandbox）
 - LLM Pin 的前端入口（schema `pinnedMessageIds` + agent-runner 已就绪,缺 UI;当前 ☆ 仅导航书签,独立于 LLM Pin）
 - sandbox 配额对 Claude Code SDK 失效（SDK 自己写盘绕过 quota）
 - 移动端伴随 App 配对通信打通
-- 测试覆盖
+- UI/E2E 测试覆盖
 
 ### ⚠️ 关键约定（动手前必看）
 - 改实体字段 → 同步 `specs/01`;改事件 → `specs/02`;改 Bash 黑名单 → 同步 `specs/11` + `src/server/security.ts`（单一数据源）。
@@ -184,4 +184,4 @@ DB 文件：`.agenthub-data/agenthub.db`;workspace：`.agenthub-data/workspaces/
 
 ---
 
-*最后更新：2026-06-03 · 基线 commit `b60c4f8`（feat: add manual context compaction）。改动较大后请同步本文件的「功能矩阵」与「当前现状」两节。*
+*最后更新：2026-06-04 · 已补核心纯函数 Vitest 覆盖。改动较大后请同步本文件的「功能矩阵」与「当前现状」两节。*

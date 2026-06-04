@@ -2,7 +2,7 @@
 
 > Artifact 是 Agent 产出的「可独立预览的产物」：网页 / 代码 / 文档 / 图片 / diff。**与 Message 解耦**，有独立的生命周期、版本、二次编辑。**修改 ArtifactContent 结构需先讨论。**
 
-源文件：`src/shared/types.ts:36-76`、`src/db/schema.ts:88-109`、`src/server/artifact-service.ts`、`src/components/artifact-preview-panel.tsx`、`src/server/tools/write-artifact.ts`
+源文件：`src/shared/types.ts`、`src/db/schema.ts`、`src/server/artifact-service.ts`、`src/components/artifact-preview-panel.tsx`、`src/server/tools/write-artifact.ts`、`src/server/tools/deploy-artifact.ts`
 
 ---
 
@@ -150,9 +150,28 @@ store.previewArtifactId → ArtifactPreviewPanel
 
 `WebAppView`：
 - 上方 tab 切「预览 / 源码」
-- 预览：`<iframe srcDoc={html} sandbox="allow-scripts">`（**没有 allow-same-origin**，详见 CLAUDE.md §5.1）
+- 预览：`<iframe src="/api/artifacts/:id/preview" sandbox="allow-scripts">`（**没有 allow-same-origin**，详见 CLAUDE.md §5.1）
 - 源码：选文件 dropdown + `<pre><code>` 显示（**TODO**：源码视图也走 shiki 高亮）
-- `buildIframeHtml`：自动把 `style.css` / `script.js` 注入到 `index.html` 的 `</head>` / `</body>` 前；裸 HTML 片段会自动包成完整 doc
+- `buildIframeHtml`：共享 helper，自动把 `style.css` / `script.js` 注入到 `index.html` 的 `</head>` / `</body>` 前；裸 HTML 片段会自动包成完整 doc
+
+### 一键预览 URL
+
+`GET /api/artifacts/:id/preview` 只服务 `web_app` artifact，返回 `text/html`，并设置 CSP sandbox / `nosniff` / `no-store`。前端 artifact 卡和部署状态卡用该路径生成当前 origin 下的完整预览 URL。
+
+`deploy_artifact` 不做外部托管，返回本地预览部署记录：
+
+```typescript
+{
+  id: 'dep_xxx',
+  artifactId: 'art_xxx',
+  title: string,
+  version: number,
+  previewPath: '/api/artifacts/art_xxx/preview',
+  status: 'ready' | 'failed',
+  error?: string,
+  createdAt: number
+}
+```
 
 ### document
 
@@ -197,23 +216,18 @@ store.previewArtifactId → ArtifactPreviewPanel
 
 ---
 
-## 版本链（TODO）
+## 版本链 + 二次编辑（已实现）
 
-字段已就绪：`artifacts.parent_artifact_id` + `version` 列。
+字段：`artifacts.parent_artifact_id` + `version`。新版本 = **新行**，`parentArtifactId` 指向父，`version = parent.version + 1`（不原地改）。
 
-事件类型已定义：`StreamEvent 'artifact.update'`（`types.ts:109`）—— payload `{ artifactId, patch: Partial<ArtifactContent> }`。
+**两条写新版本的路径**，共用 `buildArtifactContent`（`src/server/artifact-content.ts`）做内容校验/规整（单一来源）：
 
-前端 reducer 已就绪：`app-store.ts:391-396` 接 `artifact.update`，浅合并 patch。
+1. **Agent 驱动**：`write_artifact` 工具传 `parentArtifactId`（由 LLM 决定）→ Adapter 在 `tool.result` 后发 `artifact.create`，Runner 注入 `artifact_ref` part。
+2. **用户驱动**：在 `ArtifactPreviewPanel` 里用 CodeMirror 编辑 →「提交为新版本」→ `POST /api/artifacts/:id/versions` → `artifact-service.createArtifactVersion(parentId, content, title?)`（继承父的 `conversationId` / `type` / `createdByAgentId`）→ 前端 `upsertArtifact` + `openArtifactPreview(newId)` 切到新版本。可编辑范围：**web_app（多文件）/ document（markdown）**；image / code_file / diff 不可编辑。
 
-**缺什么**：
-- 没有「写新版本」的工具（`write_artifact` 总是写 v1）
-- Adapter 也没有 emit `artifact.update` 的路径
-- UI 没有「编辑产物 → 提交新版本」的入口
+**版本链读取**：`GET /api/artifacts/:id/versions` 从 root BFS 收集整条链，按 `version` 升序；`ArtifactPreviewPanel` 顶部「历史」切换条据此渲染。
 
-要实装版本链，需要：
-1. 新增 `update_artifact` 工具（或扩展 write_artifact 接受 `parentArtifactId`）
-2. Adapter 在工具结果后 emit `artifact.update` 或 `artifact.create`（新 id 但 parentArtifactId 指向旧）
-3. 前端 ArtifactPreviewPanel 加「历史版本」侧边栏
+注：`StreamEvent 'artifact.update'`（浅合并 patch）类型 + reducer 仍在，但版本链走「新行 + `artifact.create`」而非原地 patch；`artifact.update` 保留给未来「原地更新」场景。
 
 ---
 
@@ -232,6 +246,7 @@ store.previewArtifactId → ArtifactPreviewPanel
 ## 安全 / 沙箱
 
 - **web_app 的 iframe 必须 `sandbox="allow-scripts"`，绝不加 `allow-same-origin`**（CLAUDE.md §5.1）。LLM 生成的 JS 可能尝试访问宿主 cookie / localStorage，必须隔离
+- **web_app 的 preview route 必须设置 CSP sandbox**，和 iframe sandbox 形成双层约束
 - **document 的 markdown 由 react-markdown 渲染**，默认不开启原生 HTML（避免 XSS）。如要支持 HTML，需要走 sanitize
 - **image 的 url**：可以是 `https://...` 或 `data:image/...;base64,...`。LLM 当前主要产 data URI（base64 编码的小图）。SVG data URI 仍可触发 XSS（SVG 内含 script），建议未来用 `<img>` 的 origin 隔离或 sanitize SVG
 
