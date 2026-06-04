@@ -44,6 +44,7 @@ next-env.d.ts
 
 # AgentHub runtime data
 /.agenthub-data/
+/.tmp/
 /drizzle/
 
 # Electron build outputs
