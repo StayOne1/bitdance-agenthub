@@ -8,6 +8,17 @@ import type { DispatchPlanItem } from '@/shared/types'
  * 真正的执行调度（executeDag，有副作用）仍留在 agent-runner。
  */
 
+export interface CompileDispatchPlanResult {
+  plan: DispatchPlanItem[]
+  inferredDependencies: Array<{
+    taskId: string
+    dependsOn: string[]
+    reason: string
+  }>
+}
+
+type ArtifactTopic = 'prd' | 'ui_design' | 'frontend'
+
 export function parseDispatchPlanToolArgs(args: unknown): DispatchPlanItem[] {
   if (!isRecord(args) || !Array.isArray(args.tasks)) {
     throw new Error('Invalid dispatch plan: plan_tasks args must include a tasks array')
@@ -94,6 +105,70 @@ export function validateDispatchPlan(
   assertAcyclicDispatchPlan(plan)
 }
 
+export function compileDispatchPlan(plan: DispatchPlanItem[]): CompileDispatchPlanResult {
+  const inferredDependencies: CompileDispatchPlanResult['inferredDependencies'] = []
+
+  const compiled = plan.map((task, index) => {
+    const previousTasks = plan.slice(0, index)
+    const inferred = inferDependenciesForTask(task, previousTasks)
+    const explicit = task.dependsOn ?? []
+    const explicitSet = new Set(explicit)
+    const additions = inferred.filter((dep) => !explicitSet.has(dep))
+
+    const item: DispatchPlanItem = { ...task }
+    if (explicit.length > 0 || additions.length > 0) {
+      item.dependsOn = [...explicit, ...additions]
+    } else {
+      delete item.dependsOn
+    }
+
+    if (additions.length > 0) {
+      inferredDependencies.push({
+        taskId: task.id,
+        dependsOn: additions,
+        reason: 'task text references earlier task output',
+      })
+    }
+
+    return item
+  })
+
+  return { plan: compiled, inferredDependencies }
+}
+
+export function collectDependencyClosure(plan: DispatchPlanItem[], taskId: string): string[] {
+  const byId = new Map(plan.map((task) => [task.id, task]))
+  const task = byId.get(taskId)
+  if (!task) return []
+
+  const seen = new Set<string>()
+  const ordered: string[] = []
+
+  const visit = (depId: string) => {
+    if (seen.has(depId)) return
+    const dep = byId.get(depId)
+    if (!dep) return
+
+    for (const nested of dep.dependsOn ?? []) visit(nested)
+    seen.add(depId)
+    ordered.push(depId)
+  }
+
+  for (const dep of task.dependsOn ?? []) visit(dep)
+  return ordered
+}
+
+export function taskExpectsArtifact(task: DispatchPlanItem): boolean {
+  const text = task.task
+  return (
+    getProducedArtifactTopics(text).size > 0 ||
+    /(?:输出|产出|写入|生成|创建|保存).{0,40}(?:artifact|artifacts|产物|document|web_app|web app|diff|code_file|markdown|文档|报告|网页|应用|代码|PRD|设计)/i.test(text) ||
+    /(?:artifact|artifacts|产物|document|web_app|web app|diff|code_file|markdown|文档|报告|网页|应用|代码|PRD|设计).{0,40}(?:输出|产出|写入|生成|创建|保存)/i.test(text) ||
+    /(?:类型为|type\s*[:=]).{0,24}(?:document|web_app|web app|diff|code_file|image|markdown)/i.test(text) ||
+    /title\s*(?:为|:|=)/i.test(text)
+  )
+}
+
 export function assertAcyclicDispatchPlan(plan: DispatchPlanItem[]): void {
   const byId = new Map(plan.map((task) => [task.id, task]))
   const visiting = new Set<string>()
@@ -122,6 +197,93 @@ export function assertAcyclicDispatchPlan(plan: DispatchPlanItem[]): void {
   for (const task of plan) visit(task.id)
 }
 
+function inferDependenciesForTask(
+  task: DispatchPlanItem,
+  previousTasks: DispatchPlanItem[],
+): string[] {
+  const inferred = new Set<string>()
+  const taskText = task.task
+
+  if (hasDependencySignal(taskText)) {
+    for (const previous of previousTasks) {
+      if (containsTaskIdReference(taskText, previous.id)) inferred.add(previous.id)
+    }
+  }
+
+  const consumedTopics = getConsumedArtifactTopics(taskText)
+  if (consumedTopics.size > 0) {
+    for (const previous of previousTasks) {
+      const producedTopics = getProducedArtifactTopics(previous.task)
+      if ([...consumedTopics].some((topic) => producedTopics.has(topic))) {
+        inferred.add(previous.id)
+      }
+    }
+  }
+
+  if (isReviewTask(taskText)) {
+    for (const previous of previousTasks) {
+      if (taskExpectsArtifact(previous) || getProducedArtifactTopics(previous.task).size > 0) {
+        inferred.add(previous.id)
+      }
+    }
+  }
+
+  return previousTasks.filter((previous) => inferred.has(previous.id)).map((previous) => previous.id)
+}
+
+function hasDependencySignal(text: string): boolean {
+  return /(读取|基于|参考|根据|按照|依赖|等待|待.{0,12}完成|前序|上游|产物|输出|结果|审查|检查|验收|read|review|artifact)/i.test(text)
+}
+
+function containsTaskIdReference(text: string, taskId: string): boolean {
+  const escaped = escapeRegExp(taskId)
+  return new RegExp(`(^|[^A-Za-z0-9_-])${escaped}([^A-Za-z0-9_-]|$)`, 'i').test(text)
+}
+
+function getConsumedArtifactTopics(text: string): Set<ArtifactTopic> {
+  const topics = new Set<ArtifactTopic>()
+  if (consumesPrd(text)) topics.add('prd')
+  if (consumesUiDesign(text)) topics.add('ui_design')
+  if (consumesFrontend(text)) topics.add('frontend')
+  return topics
+}
+
+function getProducedArtifactTopics(text: string): Set<ArtifactTopic> {
+  const topics = new Set<ArtifactTopic>()
+  if (producesPrd(text)) topics.add('prd')
+  if (producesUiDesign(text)) topics.add('ui_design')
+  if (producesFrontend(text)) topics.add('frontend')
+  return topics
+}
+
+function consumesPrd(text: string): boolean {
+  return /(?:读取|基于|参考|根据|按照|了解|审查|检查|验收|read|review).{0,40}(?:PRD|产品需求|需求文档)|(?:PRD|产品需求|需求文档).{0,40}(?:读取|基于|参考|根据|按照|了解|审查|检查|验收|符合|read|review)/i.test(text)
+}
+
+function consumesUiDesign(text: string): boolean {
+  return /(?:读取|基于|参考|根据|按照|了解|审查|检查|验收|read|review).{0,40}(?:UI|设计稿|设计方案|风格指南)|(?:UI|设计稿|设计方案|风格指南).{0,40}(?:读取|基于|参考|根据|按照|了解|审查|检查|验收|符合|read|review)/i.test(text)
+}
+
+function consumesFrontend(text: string): boolean {
+  return /(?:读取|基于|参考|根据|按照|了解|审查|检查|验收|read|review).{0,48}(?:前端|web_app|web app|HTML|网页|实现|代码)|(?:前端|web_app|web app|HTML|网页|实现|代码).{0,48}(?:读取|基于|参考|根据|按照|了解|审查|检查|验收|符合|产出|artifact|read|review)/i.test(text)
+}
+
+function producesPrd(text: string): boolean {
+  return /(?:产出|输出|撰写|写入|生成|创建).{0,32}(?:PRD|产品需求|需求文档)|(?:PRD|产品需求|需求文档).{0,32}(?:产出|输出|撰写|写入|生成|创建)/i.test(text)
+}
+
+function producesUiDesign(text: string): boolean {
+  return /(?:产出|输出|设计|写入|生成|创建).{0,32}(?:UI|设计稿|设计方案|风格指南)|(?:UI|设计稿|设计方案|风格指南).{0,32}(?:产出|输出|写入|生成|创建)/i.test(text)
+}
+
+function producesFrontend(text: string): boolean {
+  return /(?:实现|开发|输出|产出|写入|生成|创建).{0,48}(?:前端|web_app|web app|HTML|网页|代码|应用)|(?:前端|web_app|web app|HTML|网页|代码|应用).{0,48}(?:实现|开发|输出|产出|写入|生成|创建)/i.test(text)
+}
+
+function isReviewTask(text: string): boolean {
+  return /审查|检查|验收|review|inspect|validate/i.test(text)
+}
+
 function readNonEmptyString(value: unknown, label: string): string {
   if (typeof value !== 'string' || value.trim().length === 0) {
     throw new Error(`Invalid dispatch plan: ${label} must be a non-empty string`)
@@ -131,4 +293,8 @@ function readNonEmptyString(value: unknown, label: string): string {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')
 }

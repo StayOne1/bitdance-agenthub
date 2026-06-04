@@ -20,7 +20,13 @@ import {
   renderConversationSummaryBlock,
 } from './context-compaction-service'
 import { buildHistoryFor } from './conversation-context'
-import { parseDispatchPlanToolArgs, validateDispatchPlan } from './dispatch-plan'
+import {
+  collectDependencyClosure,
+  compileDispatchPlan,
+  parseDispatchPlanToolArgs,
+  taskExpectsArtifact,
+  validateDispatchPlan,
+} from './dispatch-plan'
 import { eventBus } from './event-bus'
 import { newRunId } from './ids'
 import { getAppSettings } from './settings-service'
@@ -320,11 +326,12 @@ async function executeOrchestratorRun(
   allArtifactIds.push(...planRun.artifactIds)
   allOutputMessageIds.push(...planRun.outputMessageIds)
 
-  const plan = planRef.value
-  if (!plan) {
+  const rawPlan = planRef.value
+  if (!rawPlan) {
     // 没拆出 plan：当作 Orchestrator 直接回答了用户，结束
     return { artifactIds: allArtifactIds, outputMessageIds: allOutputMessageIds }
   }
+  const { plan } = compileDispatchPlan(rawPlan)
   validateDispatchPlan(plan, otherAgents, agent.id)
 
   publish({
@@ -428,7 +435,7 @@ async function executeDag(
       throw new Error('Circular dependency or unresolved task in plan')
     }
 
-    const wave = await Promise.all(ready.map((t) => runChildTask(t, results, ctx)))
+    const wave = await Promise.all(ready.map((t) => runChildTask(t, results, plan, ctx)))
     for (let i = 0; i < ready.length; i++) {
       results.set(ready[i].id, wave[i])
       remaining.delete(ready[i].id)
@@ -441,6 +448,7 @@ async function executeDag(
 async function runChildTask(
   task: DispatchPlanItem,
   upstream: Map<string, DispatchTaskResult>,
+  plan: DispatchPlanItem[],
   ctx: DagContext,
 ): Promise<DispatchTaskResult> {
   let release: (() => void) | null = null
@@ -459,7 +467,7 @@ async function runChildTask(
       return result
     }
 
-    const subPrompt = await buildSubAgentPrompt(task, upstream, ctx.conversationId)
+    const subPrompt = await buildSubAgentPrompt(task, upstream, ctx.conversationId, plan)
 
     const { runId: childRunId, promise } = AgentRunner.run({
       agentId: task.agentId,
@@ -480,7 +488,7 @@ async function runChildTask(
       agentId: task.agentId,
     })
 
-    const result = await promise
+    const result = requireExpectedArtifact(task, await promise)
 
     publish({
       type: 'dispatch.end',
@@ -496,6 +504,21 @@ async function runChildTask(
     return result
   } finally {
     release?.()
+  }
+}
+
+function requireExpectedArtifact(
+  task: DispatchPlanItem,
+  result: DispatchTaskResult,
+): DispatchTaskResult {
+  if (result.status !== 'complete' || result.artifactIds.length > 0 || !taskExpectsArtifact(task)) {
+    return result
+  }
+
+  return {
+    ...result,
+    status: 'failed',
+    error: `Task "${task.id}" completed without creating the expected artifact output`,
   }
 }
 
@@ -1108,10 +1131,12 @@ async function buildSubAgentPrompt(
   task: DispatchPlanItem,
   upstream: Map<string, DispatchTaskResult>,
   conversationId: string,
+  plan: DispatchPlanItem[],
 ): Promise<string> {
-  // 收集已完成上游任务的 artifact 列表，作为隐式上下文
+  // 收集已完成上游任务的 artifact 列表，作为隐式上下文。
+  // 使用传递依赖闭包，避免 Review 只看到直接上游实现而看不到 PRD / UI 设计。
   const upstreamArtifactIds = new Set<string>()
-  for (const dep of task.dependsOn ?? []) {
+  for (const dep of collectDependencyClosure(plan, task.id)) {
     const r = upstream.get(dep)
     if (r) {
       for (const artifactId of r.artifactIds) upstreamArtifactIds.add(artifactId)

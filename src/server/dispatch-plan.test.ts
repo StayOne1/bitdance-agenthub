@@ -4,18 +4,27 @@ import type { DispatchPlanItem } from '@/shared/types'
 
 import {
   assertAcyclicDispatchPlan,
+  collectDependencyClosure,
+  compileDispatchPlan,
   parseDispatchPlanToolArgs,
+  taskExpectsArtifact,
   validateDispatchPlan,
 } from './dispatch-plan'
 
-const agents = [{ id: 'ag_pm' }, { id: 'ag_frontend' }, { id: 'ag_reviewer' }]
+const agents = [
+  { id: 'ag_pm' },
+  { id: 'ag_designer' },
+  { id: 'ag_frontend' },
+  { id: 'ag_reviewer' },
+]
 
 function task(
   id: string,
   agentId: string,
   dependsOn?: string[],
+  instruction = `Do ${id}`,
 ): DispatchPlanItem {
-  const item: DispatchPlanItem = { id, agentId, task: `Do ${id}` }
+  const item: DispatchPlanItem = { id, agentId, task: instruction }
   if (dependsOn) item.dependsOn = dependsOn
   return item
 }
@@ -94,6 +103,78 @@ describe('validateDispatchPlan', () => {
     expect(() => validateDispatchPlan(plan, agents, 'ag_orchestrator')).toThrow(
       'circular dependency t1 -> t2 -> t1',
     )
+  })
+})
+
+describe('compileDispatchPlan', () => {
+  it('infers missing dependencies from task id artifact references', () => {
+    const { plan, inferredDependencies } = compileDispatchPlan([
+      task('t1', 'ag_pm', undefined, '请产出 PRD 文档，并写入 artifact。'),
+      task('t2', 'ag_frontend', undefined, '读取 t1 产物后实现 web_app artifact。'),
+    ])
+
+    expect(plan[1].dependsOn).toEqual(['t1'])
+    expect(inferredDependencies).toEqual([
+      {
+        taskId: 't2',
+        dependsOn: ['t1'],
+        reason: 'task text references earlier task output',
+      },
+    ])
+    expect(() => validateDispatchPlan(plan, agents, 'ag_orchestrator')).not.toThrow()
+  })
+
+  it('infers the PRD to UI to frontend to reviewer incident pattern', () => {
+    const { plan } = compileDispatchPlan([
+      task('t1', 'ag_pm', undefined, '输出一份 PRD 文档，并写入 artifact。'),
+      task('t2', 'ag_designer', undefined, '读取 PRD artifact 后输出一份 UI 设计方案。'),
+      task('t3', 'ag_frontend', undefined, '读取 PRD 和 UI 设计，输出一个 web_app artifact。'),
+      task(
+        't4',
+        'ag_reviewer',
+        undefined,
+        '审查前端工程师产出的 web_app artifact，检查是否符合 PRD 和 UI 设计，并输出审查报告。',
+      ),
+    ])
+
+    expect(plan.map((item) => ({ id: item.id, dependsOn: item.dependsOn }))).toEqual([
+      { id: 't1', dependsOn: undefined },
+      { id: 't2', dependsOn: ['t1'] },
+      { id: 't3', dependsOn: ['t1', 't2'] },
+      { id: 't4', dependsOn: ['t1', 't2', 't3'] },
+    ])
+  })
+
+  it('preserves explicit dependencies while adding missing review predecessors', () => {
+    const { plan } = compileDispatchPlan([
+      task('t1', 'ag_pm', undefined, '输出一份 PRD 文档，并写入 artifact。'),
+      task('t2', 'ag_designer', ['t1'], '读取 PRD artifact 后输出一份 UI 设计方案。'),
+      task('t3', 'ag_frontend', ['t2'], '读取 UI 设计，输出一个 web_app artifact。'),
+      task('t4', 'ag_reviewer', ['t3'], '审查实现是否符合 PRD 和 UI 设计，并输出审查报告。'),
+    ])
+
+    expect(plan[3].dependsOn).toEqual(['t3', 't1', 't2'])
+  })
+})
+
+describe('collectDependencyClosure', () => {
+  it('returns transitive dependencies in upstream order', () => {
+    const plan = [
+      task('t1', 'ag_pm'),
+      task('t2', 'ag_designer', ['t1']),
+      task('t3', 'ag_frontend', ['t2']),
+      task('t4', 'ag_reviewer', ['t3']),
+    ]
+
+    expect(collectDependencyClosure(plan, 't4')).toEqual(['t1', 't2', 't3'])
+  })
+})
+
+describe('taskExpectsArtifact', () => {
+  it('distinguishes artifact-producing tasks from read-only tasks', () => {
+    expect(taskExpectsArtifact(task('t1', 'ag_pm', undefined, '输出一个 document/markdown artifact。'))).toBe(true)
+    expect(taskExpectsArtifact(task('t2', 'ag_frontend', undefined, '请实现一个完整的响应式网页应用。'))).toBe(true)
+    expect(taskExpectsArtifact(task('t2', 'ag_reviewer', undefined, '读取 artifact 并总结主要问题。'))).toBe(false)
   })
 })
 
