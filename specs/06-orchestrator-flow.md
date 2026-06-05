@@ -371,6 +371,27 @@ Orchestrator 据此生成聚合消息。
 
 ---
 
+## 代码冲突检测（并发写）
+
+同一会话的所有子 Agent 共享**唯一** workspace（`agent-runner.ts` 按 conversationId 取）。同波次并行的子任务若写了**同一文件**，文件系统层面是后写覆盖先写——artifact 不受影响（独立 id + 版本链），但 workspace 文件会丢改动。
+
+**策略：检测 + 上报，不自动合并。**
+
+- 每个子 run 经 `fs_write` 写文件时，记录 `(runId, 文件绝对路径, 内容 hash)`（`src/server/dispatch-file-writes.ts`）。
+- 一波并行子任务结束后，`executeDag` 检测是否有 ≥2 个子 run 写了同一文件且**内容不同**（hash 不同；内容相同不算冲突）。判定逻辑是纯函数 `detectWaveConflicts`。
+- 命中的冲突注入 Stage 3 聚合 prompt 的 `<file_conflicts>` 块，由 Orchestrator 在总结消息里向用户说明（哪个文件、涉及哪些任务、当前保留的是最后写入版本、建议串行重做或人工合并）。
+
+**为什么不自动合并**：LLM 产物的语义合并不可靠，`<<<<<<<` 三方合并标记对生成代码意义不大；且 local 模式 workspace 可能是用户真实的 git 仓库，介入其合并有风险。把决策权交回 Orchestrator / 用户更稳妥。
+
+**已知盲区**（当前不检测，按设计取舍）：
+- `bash` 工具写文件（`echo >`、构建脚本等）不经过 `fs_write`，不被记录。
+- SDK adapter（`ClaudeCodeAdapter` / `CodexAdapter`）子 Agent 用各自 SDK 的写盘工具，绕过我们的 `fs_write`（同「sandbox 配额对 CC SDK 失效」的根因）。
+- 跨波次（有 `dependsOn`）的覆盖不算冲突——依赖即顺序，是预期的串行覆盖。
+
+全覆盖需要波次前后对 workspace 做文件快照 diff，但快照无法把变更归属到并发的具体子 run，当前不做。
+
+---
+
 ## 数据流（完整一次群聊请求）
 
 ```

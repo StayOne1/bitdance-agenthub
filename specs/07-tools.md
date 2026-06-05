@@ -197,6 +197,8 @@ export const toolRegistry = buildRegistry()
 
 **返回**：`{ path, absolutePath, cwd, bytes, applied: 'auto' | 'review' }`。`applied` 标识用户审批路径还是直接写。
 
+**冲突追踪**：写入成功后记录 `(runId, absolutePath, 内容 hash)`（`dispatch-file-writes.ts`），供 Orchestrator 检测同波次多个子 Agent 写同一文件（详见 Spec 06「代码冲突检测」）。bash / SDK adapter 自写盘不经 `fs_write`，是已知盲区。
+
 #### fs_write 审批模式
 
 人手编辑（FileTab 内自己改保存）**不走审批** —— 用户改自己的代码不需要审批自己。
