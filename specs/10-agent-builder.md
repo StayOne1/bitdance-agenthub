@@ -107,7 +107,9 @@ const AVAILABLE_TOOLS = ['write_artifact', 'deploy_artifact', 'read_artifact', '
 
 UI 当前允许勾选产物、附件和 workspace 相关常用工具。`plan_tasks` 不在列表里 —— 因为它是 Orchestrator 专用，自建 agent 不应装备。
 
-**新增工具时**：除了在 `src/server/tools/registry.ts` 注册，还要在这里 `AVAILABLE_TOOLS` 加上才能在 UI 勾选（详见 Spec 07 「新增工具步骤」）。
+每个勾选项展示面向用户的中文 label + 一句权限说明 + 原始工具名（来自同文件的 `TOOL_META`），而不是只露裸工具名。
+
+**新增工具时**：除了在 `src/server/tools/registry.ts` 注册，还要在这里 `AVAILABLE_TOOLS` 加上、并在 `TOOL_META` 补一条文案，才能在 UI 正常勾选（详见 Spec 07 「新增工具步骤」）。
 
 ---
 

@@ -40,6 +40,21 @@ const CODEX_DEFAULT_MODEL = 'gpt-5-codex'
 const AVAILABLE_TOOLS = ['write_artifact', 'deploy_artifact', 'read_artifact', 'read_attachment', 'fs_read', 'fs_write', 'bash'] as const
 const DEFAULT_CUSTOM_TOOLS = ['write_artifact', 'deploy_artifact', 'read_artifact', 'read_attachment'] as const
 
+// 工具勾选项的「面向用户」文案：label 讲它能做什么，desc 讲授予的权限边界。
+// 新增工具时记得在这里补一条（详见 specs/10-agent-builder.md「工具勾选」）。
+const TOOL_META: Record<
+  (typeof AVAILABLE_TOOLS)[number],
+  { label: string; desc: string }
+> = {
+  write_artifact: { label: '创建产物', desc: '生成可预览的代码 / 网页 / 文档 / PPT，支持多版本迭代' },
+  deploy_artifact: { label: '部署网页', desc: '把网页产物发布为本地静态站点，生成预览链接与下载包' },
+  read_artifact: { label: '读取产物', desc: '查看会话中已有产物的完整内容，便于在其基础上继续改' },
+  read_attachment: { label: '读取附件', desc: '读取用户上传的文本 / 文件附件内容' },
+  fs_read: { label: '读取文件', desc: '读取工作区内的文件（源码 / 配置等），仅限沙箱目录' },
+  fs_write: { label: '写入文件', desc: '在工作区内新建 / 修改文件；review 模式下需用户批准' },
+  bash: { label: '执行命令', desc: '在工作区内运行命令行；受命令黑名单与沙箱目录约束' },
+}
+
 /**
  * 创建 / 编辑 Agent 的对话框。
  *
@@ -386,24 +401,33 @@ export function CreateAgentDialog({
           {adapterKind === 'custom' ? (
             <div className="grid grid-cols-[80px_1fr] items-start gap-3">
               <Label>工具集</Label>
-              <div className="space-y-1">
-                {AVAILABLE_TOOLS.map((t) => (
-                  <label
-                    key={t}
-                    className={cn(
-                      'flex cursor-pointer items-center gap-2 rounded-md border px-2 py-1.5 text-sm transition hover:border-foreground/30',
-                      toolNames.has(t) && 'border-primary bg-primary/5',
-                    )}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={toolNames.has(t)}
-                      onChange={() => toggleTool(t)}
-                      className="accent-primary"
-                    />
-                    <code className="font-mono text-xs">{t}</code>
-                  </label>
-                ))}
+              <div className="space-y-1.5">
+                {AVAILABLE_TOOLS.map((t) => {
+                  const meta = TOOL_META[t]
+                  return (
+                    <label
+                      key={t}
+                      className={cn(
+                        'flex cursor-pointer items-start gap-2 rounded-md border px-3 py-2 transition hover:border-foreground/30',
+                        toolNames.has(t) && 'border-primary bg-primary/5',
+                      )}
+                    >
+                      <input
+                        type="checkbox"
+                        checked={toolNames.has(t)}
+                        onChange={() => toggleTool(t)}
+                        className="mt-0.5 accent-primary"
+                      />
+                      <div className="min-w-0">
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-medium">{meta.label}</span>
+                          <code className="font-mono text-[10px] text-muted-foreground">{t}</code>
+                        </div>
+                        <div className="mt-0.5 text-[10px] text-muted-foreground">{meta.desc}</div>
+                      </div>
+                    </label>
+                  )
+                })}
               </div>
             </div>
           ) : (

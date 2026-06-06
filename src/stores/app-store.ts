@@ -59,6 +59,8 @@ interface AppState {
   pendingQuoteForInput: {
     text: string
     sourceLabel: string
+    /** 选区意图：'ask' 来自聊天消息（就这段提问），'rewrite' 来自 artifact/文件（默认） */
+    kind?: 'rewrite' | 'ask'
     /** 可选：选区来自哪个 artifact，方便 agent 用 read_artifact 拿完整上下文 */
     artifactId?: string
     /** 可选：选区来自哪个文件路径 */

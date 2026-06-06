@@ -19,6 +19,7 @@ import { useAppStore } from '@/stores/app-store'
 interface State {
   text: string
   sourceLabel: string
+  kind: 'rewrite' | 'ask'
   artifactId?: string
   filePath?: string
   rect: DOMRect
@@ -51,6 +52,8 @@ export function SelectionPopover() {
         return
       }
       const sourceLabel = target.dataset.selectionLabel ?? '选中片段'
+      // 聊天消息选区是「就这段提问」，artifact/文件是「改写」
+      const kind = target.dataset.selectionTarget === 'message' ? 'ask' : 'rewrite'
       const artifactId = target.dataset.selectionArtifactId
       const filePath = target.dataset.selectionFilePath
       const rect = range.getBoundingClientRect()
@@ -61,6 +64,7 @@ export function SelectionPopover() {
       setState({
         text: text.length > MAX_TEXT_PREVIEW ? text.slice(0, MAX_TEXT_PREVIEW) + '\n[...截断]' : text,
         sourceLabel,
+        kind,
         artifactId,
         filePath,
         rect,
@@ -83,6 +87,7 @@ export function SelectionPopover() {
     setPendingQuote({
       text: state.text,
       sourceLabel: state.sourceLabel,
+      kind: state.kind,
       artifactId: state.artifactId,
       filePath: state.filePath,
     })
@@ -106,7 +111,7 @@ export function SelectionPopover() {
         className="flex flex-1 items-center gap-1 rounded px-1.5 py-0.5 text-left hover:bg-accent"
       >
         <Sparkles className="size-3 text-[#3370FF]" />
-        <span className="font-medium">让 Agent 改这段</span>
+        <span className="font-medium">{state.kind === 'ask' ? '问 Agent 这段' : '让 Agent 改这段'}</span>
       </button>
       <button
         type="button"

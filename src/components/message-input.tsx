@@ -758,12 +758,16 @@ export function MessageInput({ conversationId }: { conversationId: string }) {
         <div className="mb-2 flex items-start gap-2 rounded-md border border-[#3370FF]/30 bg-[#3370FF]/5 px-2 py-1.5 text-xs">
           <Sparkles className="mt-0.5 size-3 shrink-0 text-[#3370FF]" />
           <div className="min-w-0 flex-1">
-            <div className="font-medium text-[#3370FF]">改写 · {pendingQuote.sourceLabel}</div>
+            <div className="font-medium text-[#3370FF]">
+              {pendingQuote.kind === 'ask' ? '提问' : '改写'} · {pendingQuote.sourceLabel}
+            </div>
             <pre className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words font-mono text-[10px] text-muted-foreground">
               {pendingQuote.text}
             </pre>
             <div className="mt-0.5 text-[10px] text-muted-foreground/70">
-              在下方输入框写改写指令，发送时会作为引用一起发给 Agent
+              {pendingQuote.kind === 'ask'
+                ? '在下方输入框写你的问题，发送时会带上这段引用一起发给 Agent'
+                : '在下方输入框写改写指令，发送时会作为引用一起发给 Agent'}
             </div>
           </div>
           <button

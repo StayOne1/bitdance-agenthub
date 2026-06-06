@@ -623,11 +623,12 @@ export function SettingsButton() {
       <Button
         size="icon"
         variant="ghost"
+        className="group"
         onClick={() => setOpen(true)}
         title="API 设置"
         aria-label="API 设置"
       >
-        <SettingsIcon className="size-4" />
+        <SettingsIcon className="size-4 motion-safe:transition-transform motion-safe:duration-300 motion-safe:ease-out motion-safe:group-hover:rotate-45 motion-safe:group-active:scale-90" />
       </Button>
       <SettingsDialog open={open} onOpenChange={setOpen} />
     </>

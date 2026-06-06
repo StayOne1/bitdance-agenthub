@@ -219,6 +219,8 @@ function MessageItemImpl({ message }: { message: MessageRow }) {
         </div>
 
         <div
+          data-selection-target="message"
+          data-selection-label={isUser ? '我的消息' : `${name} 的消息`}
           className={cn(
             'min-w-0 rounded-lg border bg-card px-3 py-2',
             isUser && 'bg-primary/5 border-primary/20',

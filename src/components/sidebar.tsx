@@ -172,11 +172,22 @@ export function Sidebar() {
           <Button
             size="icon"
             variant="ghost"
+            className="group"
             onClick={() => setCollapsed((v) => !v)}
             aria-label={collapsed ? '展开侧边栏' : '收起侧边栏'}
             title={collapsed ? '展开' : '收起'}
           >
-            {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+            {/* hover 时向「即将移动的方向」轻推：收起态推右（要展开），展开态推左（要收起）*/}
+            <span
+              className={cn(
+                'inline-flex motion-safe:transition-transform motion-safe:duration-200 motion-safe:ease-out motion-safe:group-active:scale-90',
+                collapsed
+                  ? 'motion-safe:group-hover:translate-x-0.5'
+                  : 'motion-safe:group-hover:-translate-x-0.5',
+              )}
+            >
+              {collapsed ? <PanelLeftOpen className="size-4" /> : <PanelLeftClose className="size-4" />}
+            </span>
           </Button>
         </div>
       </div>
