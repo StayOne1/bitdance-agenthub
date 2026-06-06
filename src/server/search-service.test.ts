@@ -1,5 +1,4 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import type Database from 'better-sqlite3'
 import Database from 'better-sqlite3'
 
 import { runMessageSearchMigration } from '../db/migrate-add-message-search'
@@ -133,5 +132,13 @@ describe('searchMessages (FTS5 path)', () => {
     })
     expect(r.total).toBe(1)
     expect(r.hits[0].conversationId).toBe('c2')
+  })
+
+  it('defaultSqlite is a raw better-sqlite3 connection with .prepare()', async () => {
+    // Regression test: production path must work without injecting db.
+    // The Drizzle wrapper has .run()/.all() but NOT .prepare(); a previous
+    // version used `as unknown as Database.Database` and crashed at runtime.
+    const { sqlite } = await import('@/db/client')
+    expect(typeof (sqlite as unknown as { prepare?: unknown }).prepare).toBe('function')
   })
 })

@@ -1,6 +1,6 @@
 import type Database from 'better-sqlite3'
 
-import { db as defaultDb } from '@/db/client'
+import { sqlite as defaultSqlite } from '@/db/client'
 
 import type { SearchHit } from '@/shared/types'
 
@@ -56,7 +56,7 @@ export async function searchMessages(opts: SearchOptions): Promise<SearchResult>
   const trimmed = opts.query.trim()
   if (!trimmed) return { hits: [], total: 0, tookMs: 0 }
 
-  const target = (opts.db ?? (defaultDb as unknown as Database.Database))
+  const target = (opts.db ?? defaultSqlite)
   const limit = Math.min(Math.max(opts.limit ?? 20, 1), 100)
   const offset = Math.max(opts.offset ?? 0, 0)
 
