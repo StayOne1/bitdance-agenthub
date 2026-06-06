@@ -161,3 +161,13 @@
 .message-glow {
   animation: message-glow-pulse 2s linear;
 }
+
+@keyframes search-highlight {
+  0%   { background-color: rgba(250, 204, 21, 0.4); }
+  100% { background-color: transparent; }
+}
+
+.search-highlight-flash {
+  animation: search-highlight 2s ease-out;
+  border-radius: 0.5rem;
+}
