@@ -16,6 +16,7 @@ import { createArtifactVersion, fetchArtifactVersions, workspaceReadFile, worksp
 import { artifactPreviewPath } from '@/lib/artifact-preview'
 import { normalizeLang } from '@/lib/highlighter'
 import { cn } from '@/lib/utils'
+import { buildArtifactVersionDiff } from '@/shared/artifact-version-diff'
 import { detectBulletTone, resolvePptTheme } from '@/shared/ppt-theme'
 import type { ArtifactContent, DiffHunk, PptSlide, PptTheme } from '@/shared/types'
 import { useAppStore } from '@/stores/app-store'
@@ -49,11 +50,18 @@ export function ArtifactPreviewPanel() {
   const [versions, setVersions] = useState<ArtifactRow[] | null>(null)
   const [versionsLoading, setVersionsLoading] = useState(false)
   const [showVersions, setShowVersions] = useState(false)
+  const [showCompare, setShowCompare] = useState(false)
+  const [compareBaseId, setCompareBaseId] = useState<string | null>(null)
+  const [compareTargetId, setCompareTargetId] = useState<string | null>(null)
 
   // 切到新 artifact 时拉它的版本链
   useEffect(() => {
     if (!id) return
     let cancelled = false
+    setVersions(null)
+    setShowCompare(false)
+    setCompareBaseId(null)
+    setCompareTargetId(null)
     setVersionsLoading(true)
     fetchArtifactVersions(id)
       .then((list) => {
@@ -79,6 +87,19 @@ export function ArtifactPreviewPanel() {
     },
     [id, openPreview],
   )
+
+  const openCompare = useCallback(() => {
+    if (!id || !versions || versions.length < 2) return
+    const currentIndex = versions.findIndex((v) => v.id === id)
+    const targetIndex = currentIndex >= 0 ? currentIndex : versions.length - 1
+    const baseIndex = targetIndex > 0 ? targetIndex - 1 : 0
+    const fallbackTargetIndex = targetIndex === baseIndex ? 1 : targetIndex
+    const target = versions[fallbackTargetIndex] ?? versions[versions.length - 1]
+    const base = versions[baseIndex] ?? versions[0]
+    setCompareBaseId(base.id)
+    setCompareTargetId(target.id)
+    setShowCompare(true)
+  }, [id, versions])
 
   // 提交编辑后的内容为新版本，成功后切到新版本（版本条经 id effect 自动刷新）
   const handleSaveVersion = useCallback<SaveVersionFn>(
@@ -111,14 +132,27 @@ export function ArtifactPreviewPanel() {
         </div>
         <div className="flex items-center gap-1">
           {hasMultiple && (
-            <Button
-              size="icon"
-              variant={showVersions ? 'default' : 'ghost'}
-              onClick={() => setShowVersions((v) => !v)}
-              title={`版本历史 (${versionCount} 个)`}
-            >
-              <History className="size-4" />
-            </Button>
+            <>
+              <Button
+                size="icon"
+                variant={showCompare ? 'default' : 'ghost'}
+                onClick={() => {
+                  if (showCompare) setShowCompare(false)
+                  else openCompare()
+                }}
+                title="对比版本"
+              >
+                <GitCompare className="size-4" />
+              </Button>
+              <Button
+                size="icon"
+                variant={showVersions ? 'default' : 'ghost'}
+                onClick={() => setShowVersions((v) => !v)}
+                title={`版本历史 (${versionCount} 个)`}
+              >
+                <History className="size-4" />
+              </Button>
+            </>
           )}
           {artifact.type === 'web_app' && (
             <>
@@ -195,7 +229,17 @@ export function ArtifactPreviewPanel() {
         </div>
       )}
 
-      <ArtifactView artifact={artifact} onSaveVersion={handleSaveVersion} />
+      {showCompare && versions && compareBaseId && compareTargetId ? (
+        <VersionCompareView
+          versions={versions}
+          baseId={compareBaseId}
+          targetId={compareTargetId}
+          onBaseChange={setCompareBaseId}
+          onTargetChange={setCompareTargetId}
+        />
+      ) : (
+        <ArtifactView artifact={artifact} onSaveVersion={handleSaveVersion} />
+      )}
     </aside>
   )
 }
@@ -831,6 +875,105 @@ function CodeFileView({
   )
 }
 
+// ─── version compare ──────────────────────────────────
+function VersionCompareView({
+  versions,
+  baseId,
+  targetId,
+  onBaseChange,
+  onTargetChange,
+}: {
+  versions: ArtifactRow[]
+  baseId: string
+  targetId: string
+  onBaseChange: (id: string) => void
+  onTargetChange: (id: string) => void
+}) {
+  const { resolvedTheme } = useTheme()
+  const isDark = resolvedTheme === 'dark'
+  const diffStyles = useMemo(() => buildDiffStyles(isDark), [isDark])
+  const base = versions.find((v) => v.id === baseId) ?? versions[0]
+  const target = versions.find((v) => v.id === targetId) ?? versions[versions.length - 1]
+  const diff = useMemo(() => {
+    if (!base || !target) return null
+    return buildArtifactVersionDiff(base.content as ArtifactContent, target.content as ArtifactContent)
+  }, [base, target])
+
+  if (!base || !target || !diff) {
+    return <Empty>无法加载版本对比</Empty>
+  }
+
+  return (
+    <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
+      <div className="flex shrink-0 flex-wrap items-center gap-2 border-b bg-muted/20 px-3 py-2 text-xs">
+        <GitCompare className="size-3.5 shrink-0 text-muted-foreground" />
+        <label className="flex min-w-0 items-center gap-1">
+          <span className="shrink-0 text-muted-foreground">基准</span>
+          <VersionSelect versions={versions} value={base.id} onChange={onBaseChange} />
+        </label>
+        <span className="shrink-0 text-muted-foreground">→</span>
+        <label className="flex min-w-0 items-center gap-1">
+          <span className="shrink-0 text-muted-foreground">目标</span>
+          <VersionSelect versions={versions} value={target.id} onChange={onTargetChange} />
+        </label>
+      </div>
+
+      {diff.status === 'unsupported' ? (
+        <div className="flex min-h-0 flex-1 items-center justify-center p-8 text-center text-sm text-muted-foreground">
+          {diff.reason}
+        </div>
+      ) : (
+        <div className="min-h-0 flex-1 overflow-auto bg-background pending-diff-body">
+          {diff.sections.map((section) => (
+            <section key={section.key} className="border-b last:border-b-0">
+              <div className="flex items-center justify-between gap-3 border-b bg-muted/20 px-4 py-2 text-xs">
+                <code className="min-w-0 truncate font-mono">{section.title}</code>
+                <span className="shrink-0 font-mono text-[10px] text-muted-foreground">
+                  v{base.version} → v{target.version}
+                </span>
+              </div>
+              <ReactDiffViewer
+                oldValue={section.oldText}
+                newValue={section.newText}
+                splitView={true}
+                useDarkTheme={isDark}
+                compareMethod={DiffMethod.WORDS_WITH_SPACE}
+                leftTitle={`v${base.version}`}
+                rightTitle={`v${target.version}`}
+                styles={diffStyles}
+              />
+            </section>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
+function VersionSelect({
+  versions,
+  value,
+  onChange,
+}: {
+  versions: ArtifactRow[]
+  value: string
+  onChange: (id: string) => void
+}) {
+  return (
+    <select
+      value={value}
+      onChange={(event) => onChange(event.target.value)}
+      className="max-w-36 rounded border bg-background px-2 py-1 text-xs"
+    >
+      {versions.map((version) => (
+        <option key={version.id} value={version.id}>
+          v{version.version} · {version.title}
+        </option>
+      ))}
+    </select>
+  )
+}
+
 // ─── diff ───────────────────────────────────────────────
 function DiffArtifactView({ content }: { content: Extract<ArtifactContent, { type: 'diff' }> }) {
   const { resolvedTheme } = useTheme()
@@ -842,6 +985,9 @@ function DiffArtifactView({ content }: { content: Extract<ArtifactContent, { typ
     <div className="flex min-h-0 flex-1 flex-col overflow-hidden">
       <div className="flex shrink-0 items-center gap-2 border-b bg-muted/20 px-4 py-2 text-xs">
         <GitCompare className="size-3.5 shrink-0 text-muted-foreground" />
+        <span className="rounded border border-border bg-background px-1.5 py-0.5 text-[10px] text-muted-foreground">
+          历史 diff · 只读
+        </span>
         <span className="text-muted-foreground">目标产物</span>
         <code className="min-w-0 flex-1 truncate font-mono">{content.targetArtifactId}</code>
         <span
