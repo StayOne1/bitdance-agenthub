@@ -5,6 +5,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 
 import { AgentLibrary } from '@/components/agent-library'
 import { AgentAvatar } from '@/components/agent-avatar'
+import { GlobalSearchTrigger } from '@/components/global-search-trigger'
 import { ArtifactLibrary } from '@/components/artifact-library'
 import { NewConversationDialog } from '@/components/new-conversation-dialog'
 import { SettingsButton } from '@/components/settings-dialog'
@@ -249,8 +250,8 @@ export function Sidebar() {
 
           {/* Search box (only when not collapsed) */}
           {!collapsed && activeConversations.length > 0 && (
-            <div className="shrink-0 px-3 pt-2 pb-2">
-              <div className="relative">
+            <div className="shrink-0 flex items-center gap-2 px-3 pt-2 pb-2">
+              <div className="relative flex-1">
                 <Search className="pointer-events-none absolute left-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground" />
                 <input
                   type="text"
@@ -270,6 +271,7 @@ export function Sidebar() {
                   </button>
                 )}
               </div>
+              <GlobalSearchTrigger />
             </div>
           )}
 
