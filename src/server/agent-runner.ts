@@ -4,10 +4,13 @@ import type { ChatCompletionMessageParam } from 'openai/resources/chat/completio
 import { db, schema } from '@/db/client'
 import type { AgentRow, ArtifactRow, MessageRow, WorkspaceRow } from '@/db/schema'
 import type {
+  DispatchExpectedOutput,
   DispatchPlanItem,
+  DispatchTaskInput,
   DispatchTaskEndStatus,
   MessagePart,
   StreamEvent,
+  WritableArtifactType,
 } from '@/shared/types'
 import { estimateTokens, getModelLimits } from '@/shared/model-registry'
 
@@ -70,6 +73,13 @@ export interface RunResult {
   error?: string
   artifactIds: string[]
   outputMessageIds: string[]
+  outputArtifacts: Record<string, string>
+}
+
+interface RunExecutionResult {
+  artifactIds: string[]
+  outputMessageIds: string[]
+  outputArtifacts: Record<string, string>
 }
 
 interface DispatchTaskResult {
@@ -78,11 +88,19 @@ interface DispatchTaskResult {
   error?: string
   artifactIds: string[]
   outputMessageIds: string[]
+  outputArtifacts: Record<string, string>
 }
 
 interface BlockedDependency {
   taskId: string
   result: DispatchTaskResult
+}
+
+interface ResolvedTaskInput {
+  input: DispatchTaskInput
+  type: WritableArtifactType | null
+  artifactId: string | null
+  missing: boolean
 }
 
 class Semaphore {
@@ -146,6 +164,10 @@ const MAX_CONCURRENT_SUB_AGENT_RUNS = 4
 
 const activeRuns = new Map<string, AbortController>()
 const subAgentRunSemaphore = new Semaphore(MAX_CONCURRENT_SUB_AGENT_RUNS)
+
+function emptyRunExecutionResult(): RunExecutionResult {
+  return { artifactIds: [], outputMessageIds: [], outputArtifacts: {} }
+}
 
 export const AgentRunner = {
   run(args: RunArgs): { runId: string; promise: Promise<RunResult> } {
@@ -251,10 +273,10 @@ async function executeRun(runId: string, signal: AbortSignal, args: RunArgs): Pr
     return await finalizeOk(runId, args, result)
   } catch (err) {
     if (signal.aborted) {
-      return finalize(runId, args, 'aborted', { artifactIds: [], outputMessageIds: [] })
+      return finalize(runId, args, 'aborted', emptyRunExecutionResult())
     }
     const msg = err instanceof Error ? err.message : String(err)
-    return finalize(runId, args, 'failed', { artifactIds: [], outputMessageIds: [] }, msg)
+    return finalize(runId, args, 'failed', emptyRunExecutionResult(), msg)
   }
 }
 
@@ -267,7 +289,7 @@ async function executeSimpleRun(
   workspace: WorkspaceRow,
   prompt: string,
   attachments: AdapterAttachment[],
-): Promise<{ artifactIds: string[]; outputMessageIds: string[] }> {
+): Promise<RunExecutionResult> {
   const toolNames = args.overrideToolNames ?? agent.toolNames
 
   const adapter = agentRegistry.getAdapter(agent)
@@ -297,7 +319,7 @@ async function executeOrchestratorRun(
   workspace: WorkspaceRow,
   userPrompt: string,
   attachments: AdapterAttachment[],
-): Promise<{ artifactIds: string[]; outputMessageIds: string[] }> {
+): Promise<RunExecutionResult> {
   const conv = await db.query.conversations.findFirst({
     where: eq(schema.conversations.id, args.conversationId),
   })
@@ -311,6 +333,7 @@ async function executeOrchestratorRun(
 
   const allArtifactIds: string[] = []
   const allOutputMessageIds: string[] = []
+  const allOutputArtifacts: Record<string, string> = {}
 
   // ─── Stage 1: PLAN ─────────────────────────────────────
   const planSystemPrompt = buildOrchestratorPlanPrompt(agent.systemPrompt, otherAgents)
@@ -332,11 +355,16 @@ async function executeOrchestratorRun(
   })
   allArtifactIds.push(...planRun.artifactIds)
   allOutputMessageIds.push(...planRun.outputMessageIds)
+  Object.assign(allOutputArtifacts, planRun.outputArtifacts)
 
   const rawPlan = planRef.value
   if (!rawPlan) {
     // 没拆出 plan：当作 Orchestrator 直接回答了用户，结束
-    return { artifactIds: allArtifactIds, outputMessageIds: allOutputMessageIds }
+    return {
+      artifactIds: allArtifactIds,
+      outputMessageIds: allOutputMessageIds,
+      outputArtifacts: allOutputArtifacts,
+    }
   }
   const { plan } = compileDispatchPlan(rawPlan)
   validateDispatchPlan(plan, otherAgents, agent.id)
@@ -360,6 +388,7 @@ async function executeOrchestratorRun(
   for (const r of taskResults.values()) {
     allArtifactIds.push(...r.artifactIds)
     allOutputMessageIds.push(...r.outputMessageIds)
+    Object.assign(allOutputArtifacts, r.outputArtifacts)
   }
 
   // ─── Stage 3: AGGREGATE ────────────────────────────────
@@ -394,8 +423,13 @@ async function executeOrchestratorRun(
   const aggRun = await consumeStream(aggStream, agent.id, runId)
   allArtifactIds.push(...aggRun.artifactIds)
   allOutputMessageIds.push(...aggRun.outputMessageIds)
+  Object.assign(allOutputArtifacts, aggRun.outputArtifacts)
 
-  return { artifactIds: allArtifactIds, outputMessageIds: allOutputMessageIds }
+  return {
+    artifactIds: allArtifactIds,
+    outputMessageIds: allOutputMessageIds,
+    outputArtifacts: allOutputArtifacts,
+  }
 }
 
 // ─── DAG 调度 ──────────────────────────────────────────────
@@ -482,6 +516,16 @@ async function runChildTask(
   plan: DispatchPlanItem[],
   ctx: DagContext,
 ): Promise<DispatchTaskResult> {
+  const resolvedInputs = resolveTaskInputs(task, upstream, plan)
+  const missingRequiredInputs = resolvedInputs.filter(
+    (entry) => entry.missing && entry.input.required !== false,
+  )
+  if (missingRequiredInputs.length > 0) {
+    const result = skippedMissingInputsTaskResult(task, missingRequiredInputs)
+    publishDispatchEnd(ctx, task.id, result)
+    return result
+  }
+
   let release: (() => void) | null = null
   try {
     release = await subAgentRunSemaphore.acquire(ctx.signal)
@@ -498,7 +542,13 @@ async function runChildTask(
       return result
     }
 
-    const subPrompt = await buildSubAgentPrompt(task, upstream, ctx.conversationId, plan)
+    const subPrompt = await buildSubAgentPrompt(
+      task,
+      upstream,
+      ctx.conversationId,
+      plan,
+      resolvedInputs,
+    )
 
     const { runId: childRunId, promise } = AgentRunner.run({
       agentId: task.agentId,
@@ -542,14 +592,96 @@ function requireExpectedArtifact(
   task: DispatchPlanItem,
   result: DispatchTaskResult,
 ): DispatchTaskResult {
-  if (result.status !== 'complete' || result.artifactIds.length > 0 || !taskExpectsArtifact(task)) {
+  if (result.status !== 'complete') {
     return result
+  }
+
+  const outputArtifacts = bindImplicitSingleOutput(task, result)
+  const requiredOutputs = getRequiredExpectedOutputs(task)
+  if (requiredOutputs.length > 0) {
+    const missing = requiredOutputs.filter((output) => !outputArtifacts[output.id])
+    if (missing.length === 0) {
+      return { ...result, outputArtifacts }
+    }
+
+    return {
+      ...result,
+      outputArtifacts,
+      status: 'failed',
+      error: `Task "${task.id}" completed without required output(s): ${missing
+        .map((output) => output.id)
+        .join(', ')}`,
+    }
+  }
+
+  if (result.artifactIds.length > 0 || !taskExpectsArtifact(task)) {
+    return { ...result, outputArtifacts }
   }
 
   return {
     ...result,
+    outputArtifacts,
     status: 'failed',
     error: `Task "${task.id}" completed without creating the expected artifact output`,
+  }
+}
+
+function getRequiredExpectedOutputs(task: DispatchPlanItem): DispatchExpectedOutput[] {
+  return (task.expectedOutputs ?? []).filter((output) => output.required !== false)
+}
+
+function bindImplicitSingleOutput(
+  task: DispatchPlanItem,
+  result: DispatchTaskResult,
+): Record<string, string> {
+  const outputArtifacts = { ...result.outputArtifacts }
+  const requiredOutputs = getRequiredExpectedOutputs(task)
+  if (requiredOutputs.length !== 1 || result.artifactIds.length !== 1) {
+    return outputArtifacts
+  }
+
+  const outputId = requiredOutputs[0].id
+  if (outputArtifacts[outputId]) return outputArtifacts
+  if (Object.values(outputArtifacts).includes(result.artifactIds[0])) return outputArtifacts
+  outputArtifacts[outputId] = result.artifactIds[0]
+  return outputArtifacts
+}
+
+function resolveTaskInputs(
+  task: DispatchPlanItem,
+  upstream: Map<string, DispatchTaskResult>,
+  plan: DispatchPlanItem[],
+): ResolvedTaskInput[] {
+  const taskById = new Map(plan.map((item) => [item.id, item]))
+  return (task.inputs ?? []).map((input) => {
+    const upstreamTask = taskById.get(input.fromTaskId)
+    const expectedOutput = upstreamTask?.expectedOutputs?.find(
+      (output) => output.id === input.outputId,
+    )
+    const artifactId = upstream.get(input.fromTaskId)?.outputArtifacts[input.outputId] ?? null
+    return {
+      input,
+      type: expectedOutput?.type ?? null,
+      artifactId,
+      missing: !artifactId,
+    }
+  })
+}
+
+function skippedMissingInputsTaskResult(
+  task: DispatchPlanItem,
+  missingInputs: ResolvedTaskInput[],
+): DispatchTaskResult {
+  const missingText = missingInputs
+    .map(({ input }) => `${input.fromTaskId}.${input.outputId}`)
+    .join(', ')
+  return {
+    runId: null,
+    status: 'skipped',
+    error: `Skipped because required input artifact(s) were missing for task "${task.id}": ${missingText}`,
+    artifactIds: [],
+    outputMessageIds: [],
+    outputArtifacts: {},
   }
 }
 
@@ -566,6 +698,7 @@ function skippedTaskResult(
     error: `Skipped because upstream task(s) did not complete for task "${task.id}": ${blockerText}`,
     artifactIds: [],
     outputMessageIds: [],
+    outputArtifacts: {},
   }
 }
 
@@ -583,6 +716,7 @@ function markRemainingTasksAborted(
       error: `Aborted before task "${task.id}" started`,
       artifactIds: [],
       outputMessageIds: [],
+      outputArtifacts: {},
     }
     results.set(task.id, result)
     remaining.delete(task.id)
@@ -597,6 +731,7 @@ function abortedBeforeStartTaskResult(task: DispatchPlanItem, error: string): Di
     error: `${error} for task "${task.id}"`,
     artifactIds: [],
     outputMessageIds: [],
+    outputArtifacts: {},
   }
 }
 
@@ -625,10 +760,12 @@ async function consumeStream(
   agentId: string,
   runId: string,
   onToolCall?: (event: ToolCallEvent) => void,
-): Promise<{ artifactIds: string[]; outputMessageIds: string[] }> {
+): Promise<RunExecutionResult> {
   const partsBuffer = new Map<string, MessagePart[]>()
   const artifactIds: string[] = []
   const outputMessageIds: string[] = []
+  const outputArtifacts: Record<string, string> = {}
+  const outputKeyByArtifactId = new Map<string, string>()
   let currentMessageId: string | null = null
 
   for await (const event of stream) {
@@ -636,6 +773,11 @@ async function consumeStream(
 
     await persistEvent(event, partsBuffer, runId, agentId, outputMessageIds, artifactIds)
     publish(event)
+
+    if (event.type === 'artifact.create') {
+      const outputKey = outputKeyByArtifactId.get(event.artifact.id)
+      if (outputKey) outputArtifacts[outputKey] = event.artifact.id
+    }
 
     // 工具产出的 artifact 自动作为 artifact_ref part 挂到当前 message 末尾，
     // 让用户在聊天流里看到产物卡片而不仅是 tool_result。
@@ -679,10 +821,22 @@ async function consumeStream(
     }
 
     if (event.type === 'message.end') currentMessageId = null
+    if (event.type === 'tool.result') {
+      const handoff = readArtifactHandoffResult(event.result)
+      if (handoff) outputKeyByArtifactId.set(handoff.artifactId, handoff.outputKey)
+    }
     if (event.type === 'tool.call') onToolCall?.(event)
   }
 
-  return { artifactIds, outputMessageIds }
+  return { artifactIds, outputMessageIds, outputArtifacts }
+}
+
+function readArtifactHandoffResult(result: unknown): { artifactId: string; outputKey: string } | null {
+  if (result === null || typeof result !== 'object') return null
+  const value = result as { artifactId?: unknown; outputKey?: unknown }
+  if (typeof value.artifactId !== 'string' || typeof value.outputKey !== 'string') return null
+  if (!value.outputKey.trim()) return null
+  return { artifactId: value.artifactId, outputKey: value.outputKey }
 }
 
 async function persistEvent(
@@ -804,7 +958,7 @@ async function finalize(
   runId: string,
   args: RunArgs,
   status: 'complete' | 'failed' | 'aborted',
-  result: { artifactIds: string[]; outputMessageIds: string[] },
+  result: RunExecutionResult,
   error?: string,
 ): Promise<RunResult> {
   const finishedAt = Date.now()
@@ -847,6 +1001,7 @@ async function finalize(
     error,
     artifactIds: result.artifactIds,
     outputMessageIds: result.outputMessageIds,
+    outputArtifacts: result.outputArtifacts,
   }
 }
 
@@ -921,13 +1076,13 @@ async function emitErrorVisualisation(
 function finalizeOk(
   runId: string,
   args: RunArgs,
-  result: { artifactIds: string[]; outputMessageIds: string[] },
+  result: RunExecutionResult,
 ) {
   return finalize(runId, args, 'complete', result)
 }
 
 function finalizeFailed(runId: string, args: RunArgs, error: string) {
-  return finalize(runId, args, 'failed', { artifactIds: [], outputMessageIds: [] }, error)
+  return finalize(runId, args, 'failed', emptyRunExecutionResult(), error)
 }
 
 function publish(event: StreamEvent): void {
@@ -1136,6 +1291,9 @@ function buildOrchestratorPlanPrompt(baseSystemPrompt: string, otherAgents: Agen
     '- 若任务 B 需要任务 A 的产物 / 结论 / 输出，你【必须】在 B 的 dependsOn 里写上 A 的 id。',
     '- 在 task 文本里写「先做 A」「基于上一步」之类【没有任何效果】——执行顺序只认 dependsOn 字段。',
     '- 只有彼此真正无关、可同时进行的任务才留空 dependsOn；拿不准时倾向加依赖（串行更安全）。',
+    '- If a task produces an artifact, declare expectedOutputs with a stable id such as prd, ui_spec, web_app, or review_report.',
+    '- If a task needs an upstream artifact, declare inputs with fromTaskId and outputId; the system will compile these into dependencies.',
+    '- For tasks with quality requirements, add concise acceptanceCriteria that the assigned agent can verify.',
     '',
     '示例（设计 → 前端 → 审查，逐级依赖；agentId 用上面可用列表里的真实 id）：',
     'tasks: [',
@@ -1165,6 +1323,7 @@ async function buildSubAgentPrompt(
   upstream: Map<string, DispatchTaskResult>,
   conversationId: string,
   plan: DispatchPlanItem[],
+  resolvedInputs: ResolvedTaskInput[],
 ): Promise<string> {
   // 收集已完成上游任务的 artifact 列表，作为隐式上下文。
   // 使用传递依赖闭包，避免 Review 只看到直接上游实现而看不到 PRD / UI 设计。
@@ -1251,12 +1410,19 @@ async function buildSubAgentPrompt(
         .map((line) => `  ${line}`)
         .join('\n')
     : ''
+  const taskInputsXml = renderTaskInputsXml(resolvedInputs)
+  const expectedOutputsXml = renderExpectedOutputsXml(task.expectedOutputs ?? [])
+  const acceptanceCriteriaXml = renderAcceptanceCriteriaXml(task.acceptanceCriteria ?? [])
 
   return [
     '<context>',
     summaryXml,
     recentXml && `  <recent_conversation>\n${recentXml}\n  </recent_conversation>`,
     pinnedXml && `  <pinned_messages>\n${pinnedXml}\n  </pinned_messages>`,
+    taskInputsXml && `  <required_inputs>\n${taskInputsXml}\n  </required_inputs>`,
+    expectedOutputsXml && `  <expected_outputs>\n${expectedOutputsXml}\n  </expected_outputs>`,
+    acceptanceCriteriaXml &&
+      `  <acceptance_criteria>\n${acceptanceCriteriaXml}\n  </acceptance_criteria>`,
     upstreamArtifactsXml &&
       `  <upstream_artifacts>\n${upstreamArtifactsXml}\n  </upstream_artifacts>`,
     `  <existing_artifacts>\n${existingXml || '    （无）'}\n  </existing_artifacts>`,
@@ -1266,14 +1432,59 @@ async function buildSubAgentPrompt(
     task.task,
     '</your_task>',
     '',
+    'Before working, read every required input artifact with read_artifact(artifactId).',
+    'When creating a declared expected output, call write_artifact with outputKey equal to that output id.',
+    'Satisfy every acceptance_criteria item when present.',
+    '',
     '执行任务，必要时通过 read_artifact 获取上游产物详情。',
   ]
     .filter(Boolean)
     .join('\n')
 }
 
+function renderTaskInputsXml(inputs: ResolvedTaskInput[]): string {
+  return inputs
+    .map(({ input, type, artifactId, missing }) => {
+      const attrs = [
+        `fromTaskId=${xmlAttr(input.fromTaskId)}`,
+        `outputId=${xmlAttr(input.outputId)}`,
+        `required=${xmlAttr(input.required === false ? 'false' : 'true')}`,
+        type && `type=${xmlAttr(type)}`,
+        artifactId && `artifactId=${xmlAttr(artifactId)}`,
+        missing && 'missing="true"',
+      ]
+        .filter(Boolean)
+        .join(' ')
+      const description = input.description ? escapeXml(input.description) : ''
+      return description ? `    <input ${attrs}>${description}</input>` : `    <input ${attrs} />`
+    })
+    .join('\n')
+}
+
+function renderExpectedOutputsXml(outputs: DispatchExpectedOutput[]): string {
+  return outputs
+    .map((output) => {
+      const attrs = [
+        `id=${xmlAttr(output.id)}`,
+        `type=${xmlAttr(output.type)}`,
+        `required=${xmlAttr(output.required === false ? 'false' : 'true')}`,
+      ].join(' ')
+      const description = output.description ? escapeXml(output.description) : ''
+      return description ? `    <output ${attrs}>${description}</output>` : `    <output ${attrs} />`
+    })
+    .join('\n')
+}
+
+function renderAcceptanceCriteriaXml(criteria: string[]): string {
+  return criteria.map((criterion) => `    <item>${escapeXml(criterion)}</item>`).join('\n')
+}
+
 function renderArtifactSummaryXml(artifact: ArtifactRow): string {
   return `  <artifact id="${artifact.id}" type="${artifact.type}" title=${JSON.stringify(artifact.title)} />`
+}
+
+function xmlAttr(s: string): string {
+  return `"${escapeXml(s).replace(/"/g, '&quot;')}"`
 }
 
 function escapeXml(s: string): string {
@@ -1300,10 +1511,17 @@ async function buildAggregatePrompt(
     .map((t) => {
       const r = taskResults.get(t.id)
       if (!r) return ''
+      const outputKeyByArtifactId = new Map(
+        Object.entries(r.outputArtifacts).map(([outputKey, artifactId]) => [artifactId, outputKey]),
+      )
       const arts = r.artifactIds
         .map((id) => artifactById.get(id))
         .filter(Boolean)
-        .map((a) => `    <artifact id="${a!.id}" type="${a!.type}" title=${JSON.stringify(a!.title)} />`)
+        .map((a) => {
+          const outputKey = outputKeyByArtifactId.get(a!.id)
+          const outputAttr = outputKey ? ` outputKey=${JSON.stringify(outputKey)}` : ''
+          return `    <artifact id="${a!.id}" type="${a!.type}"${outputAttr} title=${JSON.stringify(a!.title)} />`
+        })
         .join('\n')
       const inner = arts ? `\n${arts}\n  ` : ''
       const errAttr = r.error ? ` error=${JSON.stringify(r.error)}` : ''

@@ -1,4 +1,4 @@
-import type { DispatchPlanItem } from '@/shared/types'
+import type { DispatchPlanItem, WritableArtifactType } from '@/shared/types'
 
 /**
  * Orchestrator 派发计划的解析 + 校验 + 环检测。
@@ -18,6 +18,13 @@ export interface CompileDispatchPlanResult {
 }
 
 type ArtifactTopic = 'prd' | 'ui_design' | 'frontend'
+
+const WRITABLE_ARTIFACT_TYPES = new Set<WritableArtifactType>([
+  'web_app',
+  'document',
+  'image',
+  'ppt',
+])
 
 export function parseDispatchPlanToolArgs(args: unknown): DispatchPlanItem[] {
   if (!isRecord(args) || !Array.isArray(args.tasks)) {
@@ -42,8 +49,95 @@ export function parseDispatchPlanToolArgs(args: unknown): DispatchPlanItem[] {
       )
     }
 
+    let expectedOutputs: DispatchPlanItem['expectedOutputs']
+    if (raw.expectedOutputs !== undefined) {
+      if (!Array.isArray(raw.expectedOutputs)) {
+        throw new Error(`Invalid dispatch plan: task "${id}" expectedOutputs must be an array`)
+      }
+      expectedOutputs = raw.expectedOutputs.map((output, outputIndex) => {
+        if (!isRecord(output)) {
+          throw new Error(
+            `Invalid dispatch plan: task "${id}" expectedOutputs[${outputIndex}] must be an object`,
+          )
+        }
+        const outputId = readNonEmptyString(
+          output.id,
+          `task "${id}" expectedOutputs[${outputIndex}].id`,
+        )
+        const type = readWritableArtifactType(
+          output.type,
+          `task "${id}" expectedOutputs[${outputIndex}].type`,
+        )
+        const required = readOptionalBoolean(
+          output.required,
+          `task "${id}" expectedOutputs[${outputIndex}].required`,
+        )
+        const description = readOptionalString(
+          output.description,
+          `task "${id}" expectedOutputs[${outputIndex}].description`,
+        )
+        return {
+          id: outputId,
+          type,
+          ...(required === undefined ? {} : { required }),
+          ...(description === undefined ? {} : { description }),
+        }
+      })
+    }
+
+    let inputs: DispatchPlanItem['inputs']
+    if (raw.inputs !== undefined) {
+      if (!Array.isArray(raw.inputs)) {
+        throw new Error(`Invalid dispatch plan: task "${id}" inputs must be an array`)
+      }
+      inputs = raw.inputs.map((input, inputIndex) => {
+        if (!isRecord(input)) {
+          throw new Error(
+            `Invalid dispatch plan: task "${id}" inputs[${inputIndex}] must be an object`,
+          )
+        }
+        const fromTaskId = readNonEmptyString(
+          input.fromTaskId,
+          `task "${id}" inputs[${inputIndex}].fromTaskId`,
+        )
+        const outputId = readNonEmptyString(
+          input.outputId,
+          `task "${id}" inputs[${inputIndex}].outputId`,
+        )
+        const required = readOptionalBoolean(
+          input.required,
+          `task "${id}" inputs[${inputIndex}].required`,
+        )
+        const description = readOptionalString(
+          input.description,
+          `task "${id}" inputs[${inputIndex}].description`,
+        )
+        return {
+          fromTaskId,
+          outputId,
+          ...(required === undefined ? {} : { required }),
+          ...(description === undefined ? {} : { description }),
+        }
+      })
+    }
+
+    let acceptanceCriteria: string[] | undefined
+    if (raw.acceptanceCriteria !== undefined) {
+      if (!Array.isArray(raw.acceptanceCriteria)) {
+        throw new Error(`Invalid dispatch plan: task "${id}" acceptanceCriteria must be an array`)
+      }
+      acceptanceCriteria = raw.acceptanceCriteria.map((criterion, criterionIndex) =>
+        readNonEmptyString(criterion, `task "${id}" acceptanceCriteria[${criterionIndex}]`),
+      )
+    }
+
     const item: DispatchPlanItem = { id, agentId, task }
     if (dependsOn && dependsOn.length > 0) item.dependsOn = dependsOn
+    if (expectedOutputs && expectedOutputs.length > 0) item.expectedOutputs = expectedOutputs
+    if (inputs && inputs.length > 0) item.inputs = inputs
+    if (acceptanceCriteria && acceptanceCriteria.length > 0) {
+      item.acceptanceCriteria = acceptanceCriteria
+    }
     return item
   })
 }
@@ -70,6 +164,8 @@ export function validateDispatchPlan(
       `Invalid dispatch plan: duplicate task id(s): ${[...duplicateTaskIds].join(', ')}`,
     )
   }
+
+  const taskById = new Map(plan.map((task) => [task.id, task]))
 
   for (const task of plan) {
     if (task.agentId === orchestratorAgentId) {
@@ -100,6 +196,38 @@ export function validateDispatchPlan(
         )
       }
     }
+
+    const outputIds = new Set<string>()
+    for (const output of task.expectedOutputs ?? []) {
+      if (outputIds.has(output.id)) {
+        throw new Error(
+          `Invalid dispatch plan: task "${task.id}" lists duplicate expected output "${output.id}"`,
+        )
+      }
+      outputIds.add(output.id)
+    }
+
+    for (const input of task.inputs ?? []) {
+      if (input.fromTaskId === task.id) {
+        throw new Error(
+          `Invalid dispatch plan: task "${task.id}" input cannot reference itself`,
+        )
+      }
+      const upstream = taskById.get(input.fromTaskId)
+      if (!upstream) {
+        throw new Error(
+          `Invalid dispatch plan: task "${task.id}" input references unknown task "${input.fromTaskId}"`,
+        )
+      }
+      const outputExists = (upstream.expectedOutputs ?? []).some(
+        (output) => output.id === input.outputId,
+      )
+      if (!outputExists) {
+        throw new Error(
+          `Invalid dispatch plan: task "${task.id}" input references unknown output "${input.outputId}" from task "${input.fromTaskId}"`,
+        )
+      }
+    }
   }
 
   assertAcyclicDispatchPlan(plan)
@@ -112,12 +240,23 @@ export function compileDispatchPlan(plan: DispatchPlanItem[]): CompileDispatchPl
     const previousTasks = plan.slice(0, index)
     const inferred = inferDependenciesForTask(task, previousTasks)
     const explicit = task.dependsOn ?? []
-    const explicitSet = new Set(explicit)
-    const additions = inferred.filter((dep) => !explicitSet.has(dep))
+    const inputDeps = (task.inputs ?? []).map((input) => input.fromTaskId)
+    const dependencySet = new Set(explicit)
+    const dependencies = [...explicit]
+    const additions = inferred.filter((dep) => !dependencySet.has(dep))
+    for (const dep of additions) {
+      dependencies.push(dep)
+      dependencySet.add(dep)
+    }
+    for (const dep of inputDeps) {
+      if (dependencySet.has(dep)) continue
+      dependencies.push(dep)
+      dependencySet.add(dep)
+    }
 
     const item: DispatchPlanItem = { ...task }
-    if (explicit.length > 0 || additions.length > 0) {
-      item.dependsOn = [...explicit, ...additions]
+    if (dependencies.length > 0) {
+      item.dependsOn = dependencies
     } else {
       delete item.dependsOn
     }
@@ -159,6 +298,7 @@ export function collectDependencyClosure(plan: DispatchPlanItem[], taskId: strin
 }
 
 export function taskExpectsArtifact(task: DispatchPlanItem): boolean {
+  if ((task.expectedOutputs ?? []).some((output) => output.required !== false)) return true
   const text = task.task
   return (
     getProducedArtifactTopics(text).size > 0 ||
@@ -289,6 +429,32 @@ function readNonEmptyString(value: unknown, label: string): string {
     throw new Error(`Invalid dispatch plan: ${label} must be a non-empty string`)
   }
   return value
+}
+
+function readOptionalString(value: unknown, label: string): string | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'string') {
+    throw new Error(`Invalid dispatch plan: ${label} must be a string`)
+  }
+  const trimmed = value.trim()
+  return trimmed.length > 0 ? trimmed : undefined
+}
+
+function readOptionalBoolean(value: unknown, label: string): boolean | undefined {
+  if (value === undefined) return undefined
+  if (typeof value !== 'boolean') {
+    throw new Error(`Invalid dispatch plan: ${label} must be a boolean`)
+  }
+  return value
+}
+
+function readWritableArtifactType(value: unknown, label: string): WritableArtifactType {
+  if (typeof value !== 'string' || !WRITABLE_ARTIFACT_TYPES.has(value as WritableArtifactType)) {
+    throw new Error(
+      `Invalid dispatch plan: ${label} must be one of ${[...WRITABLE_ARTIFACT_TYPES].join(', ')}`,
+    )
+  }
+  return value as WritableArtifactType
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

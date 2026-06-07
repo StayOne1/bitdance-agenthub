@@ -27,6 +27,7 @@ const ArgsSchema = z.object({
   type: z.enum(['web_app', 'document', 'image', 'ppt']),
   title: z.string().min(1),
   content: z.unknown(),
+  outputKey: z.string().min(1).optional(),
   /** 可选：已有产物的 id，传则创建该产物的新版本（version+1，parentArtifactId 链接） */
   parentArtifactId: z.string().optional(),
 })
@@ -56,6 +57,11 @@ export const writeArtifactTool: ToolDef = {
         description:
           'Optional: id of an existing artifact to base a new version on. When provided, the new row links to it and version increments from the parent.',
       },
+      outputKey: {
+        type: 'string',
+        description:
+          'Optional Orchestrator handoff key. When your task declares expectedOutputs, pass the matching expectedOutputs.id so downstream tasks can consume this artifact reliably.',
+      },
     },
   },
   async handler(args, ctx) {
@@ -64,7 +70,7 @@ export const writeArtifactTool: ToolDef = {
       return { ok: false, error: `Invalid args: ${parsed.error.message}` }
     }
 
-    const { type, title, content, parentArtifactId } = parsed.data
+    const { type, title, content, parentArtifactId, outputKey } = parsed.data
     const fullContent = buildArtifactContent(type, content)
     if (!fullContent) {
       return { ok: false, error: `Invalid content for type ${type}` }
@@ -103,7 +109,14 @@ export const writeArtifactTool: ToolDef = {
 
     return {
       ok: true,
-      value: { artifactId, title, type, version, parentArtifactId: resolvedParent },
+      value: {
+        artifactId,
+        title,
+        type,
+        version,
+        parentArtifactId: resolvedParent,
+        ...(outputKey ? { outputKey } : {}),
+      },
     }
   },
 }

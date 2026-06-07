@@ -36,6 +36,7 @@ export type PartDelta =
 
 // ─── Artifact 内容（联合）─────────────────────────────────
 export type ArtifactType = 'web_app' | 'code_file' | 'diff' | 'document' | 'image' | 'ppt'
+export type WritableArtifactType = Extract<ArtifactType, 'web_app' | 'document' | 'image' | 'ppt'>
 
 export type ArtifactContent =
   | {
@@ -125,6 +126,23 @@ export interface DispatchPlanItem {
   agentId: string
   task: string
   dependsOn?: string[]
+  expectedOutputs?: DispatchExpectedOutput[]
+  inputs?: DispatchTaskInput[]
+  acceptanceCriteria?: string[]
+}
+
+export interface DispatchExpectedOutput {
+  id: string
+  type: WritableArtifactType
+  required?: boolean
+  description?: string
+}
+
+export interface DispatchTaskInput {
+  fromTaskId: string
+  outputId: string
+  required?: boolean
+  description?: string
 }
 
 export type DispatchTaskStatus =

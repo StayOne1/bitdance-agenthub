@@ -48,6 +48,10 @@ export function DispatchPlanCard({ dispatch }: { dispatch: DispatchState }) {
           {dispatch.plan.map((task, idx) => {
             const status = dispatch.taskStatus[task.id] ?? 'pending'
             const agent = agents[task.agentId]
+            const inputRefs = task.inputs?.map((input) => `${input.fromTaskId}.${input.outputId}`) ?? []
+            const outputRefs =
+              task.expectedOutputs?.map((output) => `${output.id}:${output.type}`) ?? []
+            const criteriaCount = task.acceptanceCriteria?.length ?? 0
             return (
               <div
                 key={task.id}
@@ -89,6 +93,25 @@ export function DispatchPlanCard({ dispatch }: { dispatch: DispatchState }) {
                     {status === 'running' && <TypingDots />}
                   </div>
                   <div className="mt-0.5 line-clamp-2 text-muted-foreground">{task.task}</div>
+                  {(inputRefs.length > 0 || outputRefs.length > 0 || criteriaCount > 0) && (
+                    <div className="mt-1 flex flex-wrap gap-1 text-[10px] text-muted-foreground">
+                      {inputRefs.length > 0 && (
+                        <span className="rounded border bg-muted/40 px-1 py-0.5">
+                          in {inputRefs.join(', ')}
+                        </span>
+                      )}
+                      {outputRefs.length > 0 && (
+                        <span className="rounded border bg-muted/40 px-1 py-0.5">
+                          out {outputRefs.join(', ')}
+                        </span>
+                      )}
+                      {criteriaCount > 0 && (
+                        <span className="rounded border bg-muted/40 px-1 py-0.5">
+                          checks {criteriaCount}
+                        </span>
+                      )}
+                    </div>
+                  )}
                 </div>
               </div>
             )

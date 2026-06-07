@@ -17,6 +17,27 @@ const TaskSchema = z.object({
   agentId: z.string().min(1),
   task: z.string().min(1),
   dependsOn: z.array(z.string()).optional(),
+  expectedOutputs: z
+    .array(
+      z.object({
+        id: z.string().min(1),
+        type: z.enum(['web_app', 'document', 'image', 'ppt']),
+        required: z.boolean().optional(),
+        description: z.string().optional(),
+      }),
+    )
+    .optional(),
+  inputs: z
+    .array(
+      z.object({
+        fromTaskId: z.string().min(1),
+        outputId: z.string().min(1),
+        required: z.boolean().optional(),
+        description: z.string().optional(),
+      }),
+    )
+    .optional(),
+  acceptanceCriteria: z.array(z.string().min(1)).optional(),
 })
 
 const ArgsSchema = z.object({
@@ -59,6 +80,66 @@ export const planTasksTool: ToolDef = {
               type: 'array',
               items: { type: 'string' },
               description: 'Ids of prerequisite tasks. Omit when the task can start immediately.',
+            },
+            expectedOutputs: {
+              type: 'array',
+              description:
+                'Artifacts this task is expected to produce. Use stable ids such as prd, ui_spec, web_app, review_report. The child agent must pass the same id as write_artifact.outputKey.',
+              items: {
+                type: 'object',
+                required: ['id', 'type'],
+                properties: {
+                  id: {
+                    type: 'string',
+                    description: 'Symbolic output key within this task, not an artifact id.',
+                  },
+                  type: {
+                    type: 'string',
+                    enum: ['web_app', 'document', 'image', 'ppt'],
+                    description: 'Expected artifact type.',
+                  },
+                  required: {
+                    type: 'boolean',
+                    description: 'Whether this output is required. Defaults to true.',
+                  },
+                  description: {
+                    type: 'string',
+                    description: 'Short description of what this output should contain.',
+                  },
+                },
+              },
+            },
+            inputs: {
+              type: 'array',
+              description:
+                'Upstream artifacts this task must consume. AgentRunner validates these against upstream expectedOutputs and compiles them into dependencies.',
+              items: {
+                type: 'object',
+                required: ['fromTaskId', 'outputId'],
+                properties: {
+                  fromTaskId: {
+                    type: 'string',
+                    description: 'Upstream task id that produces the artifact.',
+                  },
+                  outputId: {
+                    type: 'string',
+                    description: 'The upstream expectedOutputs.id to consume.',
+                  },
+                  required: {
+                    type: 'boolean',
+                    description: 'Whether this input is required. Defaults to true.',
+                  },
+                  description: {
+                    type: 'string',
+                    description: 'Why this input is needed.',
+                  },
+                },
+              },
+            },
+            acceptanceCriteria: {
+              type: 'array',
+              description: 'Concrete checks the task result should satisfy.',
+              items: { type: 'string' },
             },
           },
         },

@@ -44,6 +44,56 @@ describe('parseDispatchPlanToolArgs', () => {
     ])
   })
 
+  it('parses task contracts for artifact handoff', () => {
+    expect(
+      parseDispatchPlanToolArgs({
+        tasks: [
+          {
+            id: 't1',
+            agentId: 'ag_pm',
+            task: 'Write PRD',
+            expectedOutputs: [
+              {
+                id: 'prd',
+                type: 'document',
+                description: 'Product requirements',
+              },
+            ],
+            acceptanceCriteria: ['Includes P0 scope'],
+          },
+          {
+            id: 't2',
+            agentId: 'ag_frontend',
+            task: 'Build UI',
+            inputs: [{ fromTaskId: 't1', outputId: 'prd' }],
+            expectedOutputs: [{ id: 'web_app', type: 'web_app' }],
+          },
+        ],
+      }),
+    ).toEqual([
+      {
+        id: 't1',
+        agentId: 'ag_pm',
+        task: 'Write PRD',
+        expectedOutputs: [
+          {
+            id: 'prd',
+            type: 'document',
+            description: 'Product requirements',
+          },
+        ],
+        acceptanceCriteria: ['Includes P0 scope'],
+      },
+      {
+        id: 't2',
+        agentId: 'ag_frontend',
+        task: 'Build UI',
+        inputs: [{ fromTaskId: 't1', outputId: 'prd' }],
+        expectedOutputs: [{ id: 'web_app', type: 'web_app' }],
+      },
+    ])
+  })
+
   it('rejects malformed tool args', () => {
     expect(() => parseDispatchPlanToolArgs(null)).toThrow('tasks array')
     expect(() => parseDispatchPlanToolArgs({ tasks: ['bad'] })).toThrow(
@@ -95,6 +145,38 @@ describe('validateDispatchPlan', () => {
     expect(() =>
       validateDispatchPlan([task('t1', 'ag_pm'), task('t2', 'ag_frontend', ['t1', 't1'])], agents, 'ag_orchestrator'),
     ).toThrow('lists duplicate dependency "t1"')
+  })
+
+  it('rejects invalid task contracts', () => {
+    expect(() =>
+      validateDispatchPlan(
+        [
+          {
+            ...task('t1', 'ag_pm'),
+            expectedOutputs: [
+              { id: 'prd', type: 'document' },
+              { id: 'prd', type: 'document' },
+            ],
+          },
+        ],
+        agents,
+        'ag_orchestrator',
+      ),
+    ).toThrow('duplicate expected output "prd"')
+
+    expect(() =>
+      validateDispatchPlan(
+        [
+          { ...task('t1', 'ag_pm'), expectedOutputs: [{ id: 'prd', type: 'document' }] },
+          {
+            ...task('t2', 'ag_frontend'),
+            inputs: [{ fromTaskId: 't1', outputId: 'missing' }],
+          },
+        ],
+        agents,
+        'ag_orchestrator',
+      ),
+    ).toThrow('input references unknown output "missing" from task "t1"')
   })
 
   it('rejects circular dependencies', () => {
@@ -154,6 +236,19 @@ describe('compileDispatchPlan', () => {
     ])
 
     expect(plan[3].dependsOn).toEqual(['t3', 't1', 't2'])
+  })
+
+  it('compiles task inputs into dependencies', () => {
+    const { plan } = compileDispatchPlan([
+      { ...task('t1', 'ag_pm'), expectedOutputs: [{ id: 'prd', type: 'document' }] },
+      {
+        ...task('t2', 'ag_frontend'),
+        inputs: [{ fromTaskId: 't1', outputId: 'prd' }],
+      },
+    ])
+
+    expect(plan[1].dependsOn).toEqual(['t1'])
+    expect(() => validateDispatchPlan(plan, agents, 'ag_orchestrator')).not.toThrow()
   })
 })
 
