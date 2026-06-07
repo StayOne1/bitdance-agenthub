@@ -39,6 +39,7 @@ import {
 } from './dispatch-plan'
 import { eventBus } from './event-bus'
 import { newRunId } from './ids'
+import { pendingDispatchPlans } from './pending-dispatch-plans'
 import { getAppSettings } from './settings-service'
 import { getEffectiveCwd } from './workspace-utils'
 
@@ -350,7 +351,12 @@ async function executeOrchestratorRun(
 
   const planRun = await consumeStream(planStream, agent.id, runId, (event) => {
     if (event.type === 'tool.call' && event.toolName === 'plan_tasks') {
-      planRef.value = parseDispatchPlanToolArgs(event.args)
+      const plan = parseDispatchPlanToolArgs(event.args)
+      planRef.value = plan
+      return {
+        stop: true,
+        result: { acknowledged: true, taskCount: plan.length },
+      }
     }
   })
   allArtifactIds.push(...planRun.artifactIds)
@@ -366,19 +372,36 @@ async function executeOrchestratorRun(
       outputArtifacts: allOutputArtifacts,
     }
   }
-  const { plan } = compileDispatchPlan(rawPlan)
-  validateDispatchPlan(plan, otherAgents, agent.id)
+  const initialPlan = compileAndValidateDispatchPlan(rawPlan, otherAgents, agent.id)
+
+  const approvedPlan = await waitForDispatchPlanReview({
+    conversationId: args.conversationId,
+    agentId: agent.id,
+    runId,
+    plan: initialPlan,
+    availableAgents: otherAgents,
+    orchestratorAgentId: agent.id,
+    signal,
+  })
+  if (!approvedPlan) {
+    if (signal.aborted) throw new Error('Orchestrator run aborted')
+    return {
+      artifactIds: allArtifactIds,
+      outputMessageIds: allOutputMessageIds,
+      outputArtifacts: allOutputArtifacts,
+    }
+  }
 
   publish({
     type: 'dispatch.plan',
     conversationId: args.conversationId,
     timestamp: Date.now(),
     runId,
-    plan,
+    plan: approvedPlan,
   })
 
   // ─── Stage 2: EXECUTE (DAG) ────────────────────────────
-  const { results: taskResults, conflicts: fileConflicts } = await executeDag(plan, {
+  const { results: taskResults, conflicts: fileConflicts } = await executeDag(approvedPlan, {
     parentRunId: runId,
     conversationId: args.conversationId,
     triggerMessageId: args.triggerMessageId,
@@ -395,7 +418,7 @@ async function executeOrchestratorRun(
   const aggregateSystemPrompt = buildOrchestratorAggregatePrompt(agent.systemPrompt)
   const aggregateUserPrompt = await buildAggregatePrompt(
     userPrompt,
-    plan,
+    approvedPlan,
     taskResults,
     fileConflicts,
     workspace,
@@ -433,6 +456,55 @@ async function executeOrchestratorRun(
 }
 
 // ─── DAG 调度 ──────────────────────────────────────────────
+function compileAndValidateDispatchPlan(
+  rawPlan: DispatchPlanItem[],
+  availableAgents: readonly { id: string }[],
+  orchestratorAgentId: string,
+): DispatchPlanItem[] {
+  const { plan } = compileDispatchPlan(rawPlan)
+  validateDispatchPlan(plan, availableAgents, orchestratorAgentId)
+  return plan
+}
+
+async function waitForDispatchPlanReview(args: {
+  conversationId: string
+  agentId: string
+  runId: string
+  plan: DispatchPlanItem[]
+  availableAgents: readonly { id: string }[]
+  orchestratorAgentId: string
+  signal: AbortSignal
+}): Promise<DispatchPlanItem[] | null> {
+  const pending = pendingDispatchPlans.register({
+    conversationId: args.conversationId,
+    agentId: args.agentId,
+    runId: args.runId,
+    plan: args.plan,
+    validator: (plan) =>
+      compileAndValidateDispatchPlan(plan, args.availableAgents, args.orchestratorAgentId),
+  })
+
+  return new Promise((resolve) => {
+    let settled = false
+    const finish = (plan: DispatchPlanItem[] | null) => {
+      if (settled) return
+      settled = true
+      args.signal.removeEventListener('abort', onAbort)
+      resolve(plan)
+    }
+    const onAbort = () => {
+      pendingDispatchPlans.cancel(pending.id)
+    }
+
+    pendingDispatchPlans.attachResolver(pending.id, finish)
+    if (args.signal.aborted) {
+      pendingDispatchPlans.cancel(pending.id)
+      return
+    }
+    args.signal.addEventListener('abort', onAbort, { once: true })
+  })
+}
+
 interface DagContext {
   parentRunId: string
   conversationId: string
@@ -754,12 +826,19 @@ function publishDispatchEnd(
 
 // ─── 流消费 + 持久化 ─────────────────────────────────────
 type ToolCallEvent = Extract<StreamEvent, { type: 'tool.call' }>
+type ToolCallControl =
+  | void
+  | {
+      stop: true
+      result?: unknown
+      isError?: boolean
+    }
 
 async function consumeStream(
   stream: AsyncIterable<StreamEvent>,
   agentId: string,
   runId: string,
-  onToolCall?: (event: ToolCallEvent) => void,
+  onToolCall?: (event: ToolCallEvent) => ToolCallControl,
 ): Promise<RunExecutionResult> {
   const partsBuffer = new Map<string, MessagePart[]>()
   const artifactIds: string[] = []
@@ -825,7 +904,35 @@ async function consumeStream(
       const handoff = readArtifactHandoffResult(event.result)
       if (handoff) outputKeyByArtifactId.set(handoff.artifactId, handoff.outputKey)
     }
-    if (event.type === 'tool.call') onToolCall?.(event)
+    if (event.type === 'tool.call') {
+      const control = onToolCall?.(event)
+      if (control?.stop) {
+        if ('result' in control) {
+          const resultEvent: StreamEvent = {
+            type: 'tool.result',
+            conversationId: event.conversationId,
+            timestamp: Date.now(),
+            messageId: event.messageId,
+            callId: event.callId,
+            result: control.result,
+            isError: control.isError ?? false,
+          }
+          await persistEvent(resultEvent, partsBuffer, runId, agentId, outputMessageIds, artifactIds)
+          publish(resultEvent)
+        }
+
+        const endEvent: StreamEvent = {
+          type: 'message.end',
+          conversationId: event.conversationId,
+          timestamp: Date.now(),
+          messageId: event.messageId,
+        }
+        await persistEvent(endEvent, partsBuffer, runId, agentId, outputMessageIds, artifactIds)
+        publish(endEvent)
+        currentMessageId = null
+        break
+      }
+    }
   }
 
   return { artifactIds, outputMessageIds, outputArtifacts }
