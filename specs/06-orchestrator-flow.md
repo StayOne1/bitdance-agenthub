@@ -374,6 +374,24 @@ Orchestrator 据此生成聚合消息。
 
 ---
 
+## 动态重规划（dynamic re-planning）
+
+失败降级是"如实上报"，**动态重规划**把它升级为"自愈"：一轮 EXECUTE 后若仍有 failed/skipped/写冲突，把上一轮结果摘要喂回 Orchestrator，由它**再 plan 一轮补救**，最多 `MAX_DISPATCH_ROUNDS` 轮，再进 AGGREGATE。
+
+```
+PLAN → EXECUTE → (有失败/冲突 且未达上限?) → REPLAN(补救) → EXECUTE → … → AGGREGATE
+```
+
+- **决策权在 Orchestrator(LLM)**：AgentRunner 只机械地"再给一次 plan 机会"——把上一轮 `<previous_round_results>`（已完成 / 失败 / 冲突）+ 补救指示拼进 plan 阶段 user prompt（`buildReplanContext`），由 LLM 决定补救 plan（换 agent / 用 `dependsOn` 串行化写同一文件的任务 / 拆细）。LLM 这一轮不调 `plan_tasks` = 判断无需/无法补救 → 进聚合。这正是本规格「不做的事」里"必要时由 Orchestrator 决定再次 plan"的实现。
+- **上限**：`MAX_DISPATCH_ROUNDS = 2`（首轮 + 最多 1 轮补救），呼应"不做无限重试"。
+- **触发判定**：`shouldReplan(views, conflicts)` —— 本轮有非 complete 任务或有写冲突（纯函数，`dispatch-plan.ts`，可单测）。
+- **结果合并**：跨轮按 `taskId` 合并（`mergedResults`，新轮覆盖同 id）；AGGREGATE 只喂合并后的最终态，避免列陈旧/重复 artifact。
+- **副作用注意**：补救轮重做会新建 artifact（独立 id）、覆盖 workspace 文件（跨轮覆盖按设计不算冲突，见下节）；故补救 prompt 明确"已 complete 的不要重做"。
+- **级联中止**：同一 `signal` 透传每轮，每轮前查 `signal.aborted`；`waitForDispatchPlanReview` 每轮新注册的 pending 在 abort 时已能 cancel。
+- **UI**：补救轮复用 Orchestrator runId 发新 `dispatch.plan`，前端调度卡覆盖为最新轮；补救过程由聚合消息文字体现（多轮卡片可视化为后续增强）。
+
+---
+
 ## 代码冲突检测（并发写）
 
 同一会话的所有子 Agent 共享**唯一** workspace（`agent-runner.ts` 按 conversationId 取）。同波次并行的子任务若写了**同一文件**，文件系统层面是后写覆盖先写——artifact 不受影响（独立 id + 版本链），但 workspace 文件会丢改动。
