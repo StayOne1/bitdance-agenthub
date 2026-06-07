@@ -28,6 +28,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import type { AppSettingsRow } from '@/db/schema'
 import {
   fetchAppSettings,
@@ -240,95 +241,116 @@ export function SettingsDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="grid max-h-[calc(100vh-2rem)] max-w-lg grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
+      <DialogContent className="grid max-h-[calc(100vh-2rem)] max-w-xl grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden">
         <DialogHeader>
-          <DialogTitle>API 设置</DialogTitle>
+          <DialogTitle>设置</DialogTitle>
           <DialogDescription>
             填写常用 provider 的 API key。填写后将覆盖系统环境变量；留空则继续使用 env var（如有）。
             Agent 单独配置的 key 仍然优先级最高。
           </DialogDescription>
         </DialogHeader>
 
-        <div className="min-h-0 overflow-y-auto pr-1">
-          {loading ? (
-            <div className="flex h-32 items-center justify-center">
-              <Loader2 className="size-5 animate-spin text-muted-foreground" />
-            </div>
-          ) : (
-            <div className="flex flex-col gap-5 py-2">
-              <MobileConnectionHints
-                hints={connectionHints}
-                loading={hintsLoading}
-                copiedUrl={copiedUrl}
-                companionMode={form.companionMode}
-                mobileDeviceToken={form.mobileDeviceToken}
-                busy={busy}
-                tokenBusy={tokenBusy}
-                restartRequired={restartRequired}
-                onCopy={(hint) => void handleCopyHint(hint)}
-                onCopyText={(value) => void handleCopyText(value)}
-                onEnable={() => void handleEnableCompanion()}
-                onDisable={() => void handleDisableCompanion()}
-                onRegenerateToken={() => void handleRegenerateToken()}
-              />
+        {loading ? (
+          <div className="flex min-h-0 items-center justify-center">
+            <Loader2 className="size-5 animate-spin text-muted-foreground" />
+          </div>
+        ) : (
+          <Tabs defaultValue="keys" className="grid min-h-0 grid-rows-[auto_minmax(0,1fr)] gap-3">
+            <TabsList className="justify-self-start">
+              <TabsTrigger value="keys">
+                <KeyRound className="size-3.5" />
+                供应商 Key
+              </TabsTrigger>
+              <TabsTrigger value="mobile">
+                <Smartphone className="size-3.5" />
+                移动端
+              </TabsTrigger>
+              <TabsTrigger value="publish">
+                <FolderUp className="size-3.5" />
+                发布
+              </TabsTrigger>
+            </TabsList>
 
-              <DeploymentPublishSettings
-                enabled={form.deploymentPublishEnabled}
-                publishDir={form.deploymentPublishDir}
-                publicBaseUrl={form.deploymentPublicBaseUrl}
-                onEnabledChange={(deploymentPublishEnabled) =>
-                  setForm((f) => ({ ...f, deploymentPublishEnabled }))
-                }
-                onPublishDirChange={(deploymentPublishDir) =>
-                  setForm((f) => ({ ...f, deploymentPublishDir }))
-                }
-                onPublicBaseUrlChange={(deploymentPublicBaseUrl) =>
-                  setForm((f) => ({ ...f, deploymentPublicBaseUrl }))
-                }
-              />
+            <div className="min-h-0 overflow-y-auto pr-1">
+              <TabsContent value="keys" className="mt-0 flex flex-col gap-3 py-1">
+                <KeyField
+                  label="Anthropic API Key"
+                  hint="用于 Claude Code adapter / custom anthropic provider。"
+                  value={form.anthropicApiKey}
+                  reveal={reveal.anthropicApiKey}
+                  onChange={(v) => setForm((f) => ({ ...f, anthropicApiKey: v }))}
+                  onToggleReveal={() =>
+                    setReveal((r) => ({ ...r, anthropicApiKey: !r.anthropicApiKey }))
+                  }
+                />
+                <KeyField
+                  label="Anthropic Base URL（可选）"
+                  hint="走第三方网关时填，如 https://anyrouter.top；留空走官方 endpoint。"
+                  type="text"
+                  value={form.anthropicBaseUrl}
+                  reveal
+                  onChange={(v) => setForm((f) => ({ ...f, anthropicBaseUrl: v }))}
+                />
+                <KeyField
+                  label="OpenAI API Key"
+                  value={form.openaiApiKey}
+                  reveal={reveal.openaiApiKey}
+                  onChange={(v) => setForm((f) => ({ ...f, openaiApiKey: v }))}
+                  onToggleReveal={() => setReveal((r) => ({ ...r, openaiApiKey: !r.openaiApiKey }))}
+                />
+                <KeyField
+                  label="DeepSeek API Key"
+                  value={form.deepseekApiKey}
+                  reveal={reveal.deepseekApiKey}
+                  onChange={(v) => setForm((f) => ({ ...f, deepseekApiKey: v }))}
+                  onToggleReveal={() => setReveal((r) => ({ ...r, deepseekApiKey: !r.deepseekApiKey }))}
+                />
+                <KeyField
+                  label="Volcano Ark API Key"
+                  value={form.arkApiKey}
+                  reveal={reveal.arkApiKey}
+                  onChange={(v) => setForm((f) => ({ ...f, arkApiKey: v }))}
+                  onToggleReveal={() => setReveal((r) => ({ ...r, arkApiKey: !r.arkApiKey }))}
+                />
+              </TabsContent>
 
-              <KeyField
-                label="Anthropic API Key"
-                hint="用于 Claude Code adapter / custom anthropic provider。"
-                value={form.anthropicApiKey}
-                reveal={reveal.anthropicApiKey}
-                onChange={(v) => setForm((f) => ({ ...f, anthropicApiKey: v }))}
-                onToggleReveal={() =>
-                  setReveal((r) => ({ ...r, anthropicApiKey: !r.anthropicApiKey }))
-                }
-              />
-              <KeyField
-                label="Anthropic Base URL（可选）"
-                hint="走第三方网关时填，如 https://anyrouter.top；留空走官方 endpoint。"
-                type="text"
-                value={form.anthropicBaseUrl}
-                reveal
-                onChange={(v) => setForm((f) => ({ ...f, anthropicBaseUrl: v }))}
-              />
-              <KeyField
-                label="OpenAI API Key"
-                value={form.openaiApiKey}
-                reveal={reveal.openaiApiKey}
-                onChange={(v) => setForm((f) => ({ ...f, openaiApiKey: v }))}
-                onToggleReveal={() => setReveal((r) => ({ ...r, openaiApiKey: !r.openaiApiKey }))}
-              />
-              <KeyField
-                label="DeepSeek API Key"
-                value={form.deepseekApiKey}
-                reveal={reveal.deepseekApiKey}
-                onChange={(v) => setForm((f) => ({ ...f, deepseekApiKey: v }))}
-                onToggleReveal={() => setReveal((r) => ({ ...r, deepseekApiKey: !r.deepseekApiKey }))}
-              />
-              <KeyField
-                label="Volcano Ark API Key"
-                value={form.arkApiKey}
-                reveal={reveal.arkApiKey}
-                onChange={(v) => setForm((f) => ({ ...f, arkApiKey: v }))}
-                onToggleReveal={() => setReveal((r) => ({ ...r, arkApiKey: !r.arkApiKey }))}
-              />
+              <TabsContent value="mobile" className="mt-0 py-1">
+                <MobileConnectionHints
+                  hints={connectionHints}
+                  loading={hintsLoading}
+                  copiedUrl={copiedUrl}
+                  companionMode={form.companionMode}
+                  mobileDeviceToken={form.mobileDeviceToken}
+                  busy={busy}
+                  tokenBusy={tokenBusy}
+                  restartRequired={restartRequired}
+                  onCopy={(hint) => void handleCopyHint(hint)}
+                  onCopyText={(value) => void handleCopyText(value)}
+                  onEnable={() => void handleEnableCompanion()}
+                  onDisable={() => void handleDisableCompanion()}
+                  onRegenerateToken={() => void handleRegenerateToken()}
+                />
+              </TabsContent>
+
+              <TabsContent value="publish" className="mt-0 py-1">
+                <DeploymentPublishSettings
+                  enabled={form.deploymentPublishEnabled}
+                  publishDir={form.deploymentPublishDir}
+                  publicBaseUrl={form.deploymentPublicBaseUrl}
+                  onEnabledChange={(deploymentPublishEnabled) =>
+                    setForm((f) => ({ ...f, deploymentPublishEnabled }))
+                  }
+                  onPublishDirChange={(deploymentPublishDir) =>
+                    setForm((f) => ({ ...f, deploymentPublishDir }))
+                  }
+                  onPublicBaseUrlChange={(deploymentPublicBaseUrl) =>
+                    setForm((f) => ({ ...f, deploymentPublicBaseUrl }))
+                  }
+                />
+              </TabsContent>
             </div>
-          )}
-        </div>
+          </Tabs>
+        )}
 
         <DialogFooter>
           <Button variant="outline" onClick={() => onOpenChange(false)} disabled={busy}>
