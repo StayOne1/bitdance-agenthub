@@ -30,6 +30,7 @@ type StreamEvent = BaseEvent & (
   // —— Message 生命周期 ——
   | { type: 'message.start', messageId: string, agentId: string, runId: string }
   | { type: 'message.end',   messageId: string }
+  | { type: 'message.added', message: Message }   // 用户消息：已落库后广播，让非发送方客户端实时插入
 
   // —— Part 增量（核心，最高频）——
   | { type: 'part.start',  messageId: string, partIndex: number, part: MessagePart }
@@ -212,6 +213,7 @@ dispatch.end      (parentRunId=r1, taskId=t3, status='skipped', error='Upstream 
 | `run.*` | ✅ 落到 `agent_runs` 表 | start/end 更新 status |
 | `message.start` | ✅ 创建 message 记录（parts=[]） | |
 | `message.end` | ✅ 更新 status='complete' | |
+| `message.added` | ❌ 透传 | user 消息已由 `sendMessage` 落库；此事件仅广播给其它客户端，前端按 id 幂等 upsert（详见下方「用户消息广播」） |
 | `part.start` | ✅ 写入 `messages.parts[i]` | parts 整体作为 JSON 更新 |
 | `part.delta` | ✅ 追加到 `messages.parts[i].content` | 高频写，可批量合并（每 100ms flush） |
 | `part.end` | ❌ 透传 | parts 状态由 part.start/delta 已足够 |

@@ -24,6 +24,16 @@ Each agent message MUST begin with `message.start` and finish with `message.end`
 - **THEN** the message status is updated to `complete`
 - **AND** the run ends with status `complete`.
 
+### Requirement: User messages SHALL be broadcast to all clients
+
+A newly created user message MUST be published as a `message.added` event carrying the full message, so that clients other than the sender (e.g. a desktop client viewing a conversation a mobile client just posted into) insert it in real time. The message is already persisted by the time the event is published, so subscribers MUST apply it idempotently by message id rather than re-creating it.
+
+#### Scenario: A second client receives another client's user message
+- **WHEN** a user message is created from any client
+- **THEN** EventBus publishes a `message.added` event with the full message row
+- **AND** every other subscribed client upserts it by id
+- **AND** the sending client (which already inserted it optimistically and reconciled via the POST response) is unaffected.
+
 ### Requirement: Usage events SHALL update durable accounting
 
 Adapters SHALL emit `message.usage` and `run.usage` when provider usage data is available, and AgentRunner MUST persist those payloads without coupling to provider-specific token fields.

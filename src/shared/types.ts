@@ -251,6 +251,7 @@ export type StreamEvent = BaseEvent &
     | { type: 'message.start'; messageId: string; agentId: string; runId: string }
     | { type: 'message.end'; messageId: string }
     | { type: 'message.usage'; messageId: string; usage: MessageUsageEvent }
+    | { type: 'message.added'; message: MessageRecord }
     | { type: 'part.start'; messageId: string; partIndex: number; part: MessagePart }
     | { type: 'part.delta'; messageId: string; partIndex: number; delta: PartDelta }
     | { type: 'part.end'; messageId: string; partIndex: number }
@@ -303,6 +304,22 @@ export interface ArtifactRecord {
   version: number
   parentArtifactId?: string
   createdByAgentId: string
+  createdAt: number
+}
+
+// 用于事件 payload 的完整消息（与 db/schema.ts 的 MessageRow 同形）。
+// types 不反向 import schema 以免循环依赖，故在此重复定义，类比上面的 ArtifactRecord。
+export interface MessageRecord {
+  id: string
+  conversationId: string
+  role: 'user' | 'agent' | 'system'
+  agentId: string | null
+  parts: MessagePart[]
+  status: 'streaming' | 'complete' | 'error' | 'aborted'
+  parentMessageId: string | null
+  mentionedAgentIds: string[]
+  runId: string | null
+  usage: MessageUsageEvent | null
   createdAt: number
 }
 

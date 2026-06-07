@@ -378,6 +378,7 @@ Tab 4: 设置
 ## 11. 与现有架构的关系
 
 - `StreamEvent` 仍是桌面到移动的实时协议。
+- 用户消息（任意客户端发出）通过 `message.added` 广播，实现跨客户端实时同步（如桌面端看到手机端发的消息）；详见 Spec 02。
 - 移动端可以复用 `applyEvent` 的核心 reducer，但不要强行复用桌面 UI 组件。
 - `AgentRunner`、Adapter、ToolRegistry 不为移动端分叉。
 - `/api/mobile/*` 是安全裁剪层，不替代现有桌面 API。

@@ -15,6 +15,7 @@ import {
   parseDeployCommand,
   type DeployCommandResult,
 } from './deploy-command-service'
+import { eventBus } from './event-bus'
 import {
   newConversationId,
   newMessageId,
@@ -597,6 +598,27 @@ export async function sendMessage(args: SendMessageArgs): Promise<SendMessageRes
     .set({ updatedAt: now })
     .where(eq(schema.conversations.id, args.conversationId))
 
+  // 广播新用户消息：消息已落库，这条事件让其它已连接客户端（如桌面端看手机端发来的消息）实时插入。
+  // 发送方自己靠乐观更新 + POST 返回值对账；按 id 幂等，重复收到无副作用。详见 specs/02。
+  eventBus.publish({
+    type: 'message.added',
+    conversationId: args.conversationId,
+    timestamp: now,
+    message: {
+      id: messageId,
+      conversationId: args.conversationId,
+      role: 'user',
+      agentId: null,
+      parts,
+      status: 'complete',
+      parentMessageId: args.parentMessageId ?? null,
+      mentionedAgentIds: args.mentionedAgentIds ?? [],
+      runId: null,
+      usage: null,
+      createdAt: now,
+    },
+  })
+
   const deployIntent =
     parts.length === 1 &&
     !args.parentMessageId &&
@@ -911,7 +933,7 @@ export async function editAndResendLatestUserMessage(
     attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
   })
 
-  // 把新写入的 user message row 完整读出来给前端（SSE 不推 user 消息，前端要自己 upsert）
+  // 把新写入的 user message row 完整读出来返给发送方做即时对账（其它客户端由 sendMessage 内的 message.added 广播补上）
   const newMessage = await db.query.messages.findFirst({
     where: eq(schema.messages.id, sent.messageId),
   })
