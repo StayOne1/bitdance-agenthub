@@ -1,5 +1,14 @@
 # AgentHub
 
+<p align="center">
+  <img alt="Next.js" src="https://img.shields.io/badge/Next.js-16-000000?logo=nextdotjs&logoColor=white">
+  <img alt="React" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=0B1F2A">
+  <img alt="Electron" src="https://img.shields.io/badge/Electron-33-47848F?logo=electron&logoColor=white">
+  <img alt="TypeScript" src="https://img.shields.io/badge/TypeScript-strict-3178C6?logo=typescript&logoColor=white">
+  <img alt="SQLite" src="https://img.shields.io/badge/SQLite-local--first-044A64?logo=sqlite&logoColor=white">
+  <img alt="pnpm" src="https://img.shields.io/badge/pnpm-workspace-F69220?logo=pnpm&logoColor=white">
+</p>
+
 AgentHub is a local-first multi-agent workspace that turns AI collaboration into an IM-style experience.
 
 Instead of treating every agent run as an isolated terminal transcript, AgentHub organizes work around conversations: agents are contacts, a conversation is a workspace, files and artifacts are shared context, and the Orchestrator can split work across multiple agents.

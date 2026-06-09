@@ -90,13 +90,13 @@ function findInPnpm(pkgName) {
   return fallback
 }
 
-function readDeps(pkgJsonPath) {
+function readDependencyEntries(pkgJsonPath) {
   try {
     const pkg = JSON.parse(fs.readFileSync(pkgJsonPath, 'utf8'))
-    return Object.keys({
-      ...(pkg.dependencies || {}),
-      ...(pkg.optionalDependencies || {}),
-    })
+    return [
+      ...Object.keys(pkg.dependencies || {}).map((name) => ({ name, optional: false })),
+      ...Object.keys(pkg.optionalDependencies || {}).map((name) => ({ name, optional: true })),
+    ]
   } catch {
     return []
   }
@@ -124,20 +124,34 @@ function pruneNestedNodeModules(dir) {
   }
 }
 
-const seen = new Set()
+const seen = new Map()
 const queue = []
-for (const name of readDeps(path.join(root, 'package.json'))) {
-  if (!seen.has(name)) {
-    seen.add(name)
-    queue.push(name)
+function enqueueDependency(entry) {
+  const existingOptional = seen.get(entry.name)
+  if (existingOptional === undefined) {
+    seen.set(entry.name, entry.optional)
+    queue.push(entry)
+    return
+  }
+  // If a dependency was first seen as optional and later as required, process it again
+  // so missing required packages are not hidden by an earlier optional traversal.
+  if (existingOptional && !entry.optional) {
+    seen.set(entry.name, false)
+    queue.push(entry)
   }
 }
 
+for (const entry of readDependencyEntries(path.join(root, 'package.json'))) {
+  enqueueDependency(entry)
+}
+
 let addedDeps = 0
-let unresolved = []
+let unresolvedRequired = []
+let unresolvedOptional = []
 let cleanedBrokenSymlinks = 0
 while (queue.length > 0) {
-  const name = queue.shift()
+  const { name } = queue.shift()
+  const optional = seen.get(name) ?? false
   const dest = path.join(standaloneNodeModules, name)
   // existsSync 在 Windows 上对某些 next-build 留下的 SYMLINKD 会返回 false（即便 target 真存在），
   // 因为 Node 跟随 symlink 时 statSync 报 EPERM。直接 statSync 兜底，并把这种「不可跟随的 symlink」
@@ -155,11 +169,8 @@ while (queue.length > 0) {
     }
   }
   if (destOk) {
-    for (const childDep of readDeps(path.join(dest, 'package.json'))) {
-      if (!seen.has(childDep)) {
-        seen.add(childDep)
-        queue.push(childDep)
-      }
+    for (const childDep of readDependencyEntries(path.join(dest, 'package.json'))) {
+      enqueueDependency(childDep)
     }
     continue
   }
@@ -173,7 +184,8 @@ while (queue.length > 0) {
   }
   const src = findInPnpm(name)
   if (!src) {
-    unresolved.push(name)
+    if (optional) unresolvedOptional.push(name)
+    else unresolvedRequired.push(name)
     continue
   }
   fs.mkdirSync(path.dirname(dest), { recursive: true })
@@ -182,20 +194,25 @@ while (queue.length > 0) {
   // 拷完后剪掉 nested node_modules（pnpm 的依赖通过 symlink 接通，平铺布局下这些都是废链接）
   pruneNestedNodeModules(dest)
   addedDeps++
-  for (const childDep of readDeps(path.join(src, 'package.json'))) {
-    if (!seen.has(childDep)) {
-      seen.add(childDep)
-      queue.push(childDep)
-    }
+  for (const childDep of readDependencyEntries(path.join(src, 'package.json'))) {
+    enqueueDependency(childDep)
   }
 }
 console.log(
   `✓ deps: added ${addedDeps} missing package(s) to standalone/node_modules` +
     (cleanedBrokenSymlinks > 0 ? ` (cleaned ${cleanedBrokenSymlinks} unfollowable symlink(s) en route)` : ''),
 )
-if (unresolved.length > 0) {
-  // 这些通常是 darwin / linux / arm 平台特定的可选 native binary，Windows 用不到
-  console.warn(`  ! could not locate in .pnpm (${unresolved.length} pkgs, mostly platform-specific natives): ${unresolved.slice(0, 5).join(', ')}${unresolved.length > 5 ? ' ...' : ''}`)
+if (unresolvedRequired.length > 0) {
+  console.warn(
+    `  ! missing required package(s) in .pnpm (${unresolvedRequired.length}): ${unresolvedRequired.slice(0, 5).join(', ')}${unresolvedRequired.length > 5 ? ' ...' : ''}`,
+  )
+}
+const optionalOnly = unresolvedOptional.filter((name) => !unresolvedRequired.includes(name))
+if (optionalOnly.length > 0) {
+  console.log(
+    `✓ optional deps: skipped ${optionalOnly.length} platform-specific package(s) not installed for ${process.platform}/${process.arch}` +
+      ` (${optionalOnly.slice(0, 5).join(', ')}${optionalOnly.length > 5 ? ' ...' : ''})`,
+  )
 }
 
 // ─── D: 走查 symlinks（dep-copy 之后再做，防止过程中又混入 symlink）────
