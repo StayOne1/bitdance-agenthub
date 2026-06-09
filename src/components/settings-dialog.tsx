@@ -245,8 +245,8 @@ export function SettingsDialog({
         <DialogHeader>
           <DialogTitle>设置</DialogTitle>
           <DialogDescription>
-            填写常用 provider 的 API key。填写后将覆盖系统环境变量；留空则继续使用 env var（如有）。
-            Agent 单独配置的 key 仍然优先级最高。
+            填写常用供应商的 API Key。填写后将覆盖系统环境变量；留空则继续使用环境变量（如有）。
+            Agent 设置中单独配置的 Key 仍然优先级最高。
           </DialogDescription>
         </DialogHeader>
 
