@@ -16,6 +16,7 @@ import type {
   PendingQuestion,
   PendingWrite,
 } from '@/shared/types'
+import type { AgentConfigDraft, AgentDraftRequest } from '@/shared/agent-builder-config'
 
 export interface ArtifactListItem {
   id: string
@@ -71,6 +72,17 @@ export async function createAgent(body: CreateAgentBody): Promise<AgentRow> {
     }),
   )
   return agent
+}
+
+export async function createAgentDraft(body: AgentDraftRequest): Promise<AgentConfigDraft> {
+  const { draft } = await json<{ draft: AgentConfigDraft }>(
+    fetch('/api/agents/draft', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    }),
+  )
+  return draft
 }
 
 export type UpdateAgentBody = Partial<

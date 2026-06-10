@@ -1,8 +1,9 @@
 'use client'
 
-import { Cpu, User, Wrench } from 'lucide-react'
+import { Cpu, MessageSquareText, SlidersHorizontal, Sparkles, User, Wrench } from 'lucide-react'
 import { useEffect, useState } from 'react'
 
+import { AgentCreateWizard } from '@/components/agent-create-wizard'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -23,6 +24,19 @@ import {
   type UpdateAgentBody,
 } from '@/lib/api'
 import { cn } from '@/lib/utils'
+import {
+  AGENT_BUILDER_PROVIDER_DEFAULTS as PROVIDER_DEFAULTS,
+  AGENT_TOOL_META as TOOL_META,
+  AGENT_TOOL_PRESETS as TOOL_PRESETS,
+  AVAILABLE_AGENT_TOOLS,
+  CLAUDE_CODE_DEFAULT_MODEL,
+  CODEX_DEFAULT_MODEL,
+  DEFAULT_CUSTOM_AGENT_TOOLS,
+  type AgentBuilderAdapter as AdapterKind,
+  type AgentBuilderProvider as Provider,
+  type AgentConfigDraft,
+  type AgentToolName as ToolName,
+} from '@/shared/agent-builder-config'
 import { validateCodexBaseUrl } from '@/shared/codex-compat'
 import {
   validateOpenAICompatibleApiKey,
@@ -30,83 +44,8 @@ import {
 } from '@/shared/openai-compatible'
 import { useAppStore } from '@/stores/app-store'
 
-type Provider = 'deepseek' | 'anthropic' | 'openai' | 'volcano-ark' | 'openai-compatible'
-type AdapterKind = 'custom' | 'claude-code' | 'codex'
 type AgentTab = 'basic' | 'model' | 'toolsPrompt'
-
-const PROVIDER_DEFAULTS: Record<Provider, { label: string; defaultModel: string }> = {
-  deepseek: { label: 'DeepSeek', defaultModel: 'deepseek-v4-flash' },
-  anthropic: { label: 'Anthropic', defaultModel: 'claude-opus-4-7' },
-  openai: { label: 'OpenAI', defaultModel: 'gpt-4o' },
-  'volcano-ark': { label: '火山方舟 (豆包)', defaultModel: 'doubao-seed-2-0-lite-260428' },
-  'openai-compatible': { label: 'OpenAI-compatible', defaultModel: '' },
-}
-
-const CLAUDE_CODE_DEFAULT_MODEL = 'claude-opus-4-7'
-const CODEX_DEFAULT_MODEL = 'gpt-5-codex'
-
-const AVAILABLE_TOOLS = [
-  'write_artifact',
-  'deploy_artifact',
-  'deploy_workspace',
-  'read_artifact',
-  'read_attachment',
-  'ask_user',
-  'fs_read',
-  'fs_write',
-  'bash',
-] as const
-type ToolName = (typeof AVAILABLE_TOOLS)[number]
-
-const TOOL_PRESETS: Array<{
-  id: string
-  label: string
-  desc: string
-  tools: readonly ToolName[]
-}> = [
-  {
-    id: 'all-purpose',
-    label: '全栈通用',
-    desc: '本地代码 + artifact 交付',
-    tools: AVAILABLE_TOOLS,
-  },
-  {
-    id: 'local-code',
-    label: '本地代码',
-    desc: '读写 workspace 并运行命令',
-    tools: ['deploy_workspace', 'read_artifact', 'read_attachment', 'ask_user', 'fs_read', 'fs_write', 'bash'],
-  },
-  {
-    id: 'artifact',
-    label: '产物交付',
-    desc: '网页、文档、原型卡片',
-    tools: ['write_artifact', 'deploy_artifact', 'deploy_workspace', 'read_artifact', 'read_attachment', 'ask_user'],
-  },
-  {
-    id: 'review',
-    label: '审查验证',
-    desc: '读取产物/文件并跑检查',
-    tools: ['read_artifact', 'read_attachment', 'ask_user', 'fs_read', 'bash'],
-  },
-]
-const DEFAULT_CUSTOM_TOOLS = TOOL_PRESETS[0].tools
-
-// 工具勾选项的「面向用户」文案：label 讲它能做什么，desc 讲授予的权限边界。
-// 新增工具时记得在这里补一条（详见 specs/10-agent-builder.md「工具勾选」）。
-const TOOL_META: Record<
-  (typeof AVAILABLE_TOOLS)[number],
-  { label: string; desc: string }
-> = {
-  write_artifact: { label: '创建产物', desc: '生成可预览的代码 / 网页 / 文档 / PPT，支持多版本迭代' },
-  deploy_artifact: { label: '部署网页', desc: '把网页产物发布为本地静态站点，生成预览链接与下载包' },
-  deploy_workspace: { label: '部署目录', desc: '把工作区内 dist/build/out 等静态目录生成预览链接与下载包' },
-  read_artifact: { label: '读取产物', desc: '查看会话中已有产物的完整内容，便于在其基础上继续改' },
-  read_attachment: { label: '读取附件', desc: '读取用户上传的文本 / 文件附件内容' },
-  ask_user: { label: '结构化提问', desc: '让用户在明确选项中选择，用于范围、风格、平台等关键澄清' },
-  fs_read: { label: '读取文件', desc: '读取工作区内的文件（源码 / 配置等），仅限沙箱目录' },
-  fs_write: { label: '写入文件', desc: '在工作区内新建 / 修改文件；review 模式下需用户批准' },
-  bash: { label: '执行命令', desc: '在工作区内运行命令行；受命令黑名单与沙箱目录约束' },
-}
+type CreateStep = 'choose' | 'wizard' | 'detail'
 
 /**
  * 创建 / 编辑 Agent 的对话框。
@@ -133,7 +72,7 @@ export function CreateAgentDialog({
   const [adapterKind, setAdapterKind] = useState<AdapterKind>('custom')
   const [provider, setProvider] = useState<Provider>('deepseek')
   const [modelId, setModelId] = useState(PROVIDER_DEFAULTS.deepseek.defaultModel)
-  const [toolNames, setToolNames] = useState<Set<string>>(new Set(DEFAULT_CUSTOM_TOOLS))
+  const [toolNames, setToolNames] = useState<Set<string>>(new Set(DEFAULT_CUSTOM_AGENT_TOOLS))
   const [supportsVision, setSupportsVision] = useState(true)
   const [apiKey, setApiKey] = useState('')
   const [apiBaseUrl, setApiBaseUrl] = useState('')
@@ -141,6 +80,7 @@ export function CreateAgentDialog({
   const [submitting, setSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [activeTab, setActiveTab] = useState<AgentTab>('basic')
+  const [createStep, setCreateStep] = useState<CreateStep>('choose')
 
   // 每次打开 / 切换 agent 时，重置表单到该 agent 的当前值（或创建态的默认）。
   useEffect(() => {
@@ -179,11 +119,13 @@ export function CreateAgentDialog({
       setSystemPrompt('')
       setProvider('deepseek')
       setModelId(PROVIDER_DEFAULTS.deepseek.defaultModel)
-      setToolNames(new Set(DEFAULT_CUSTOM_TOOLS))
+      setToolNames(new Set(DEFAULT_CUSTOM_AGENT_TOOLS))
       setSupportsVision(true)
       setApiKey('')
       setApiBaseUrl('')
+      setCreateStep('choose')
     }
+    if (agent) setCreateStep('detail')
     setShowApiKey(false)
     setError(null)
     setActiveTab('basic')
@@ -197,7 +139,7 @@ export function CreateAgentDialog({
       setModelId(CODEX_DEFAULT_MODEL)
     } else {
       setModelId(PROVIDER_DEFAULTS[provider].defaultModel)
-      setToolNames((prev) => (prev.size === 0 ? new Set(DEFAULT_CUSTOM_TOOLS) : prev))
+      setToolNames((prev) => (prev.size === 0 ? new Set(DEFAULT_CUSTOM_AGENT_TOOLS) : prev))
     }
   }
 
@@ -222,6 +164,67 @@ export function CreateAgentDialog({
 
   const isPresetActive = (tools: readonly ToolName[]) =>
     toolNames.size === tools.length && tools.every((toolName) => toolNames.has(toolName))
+
+  const applyDraftToForm = (draft: AgentConfigDraft) => {
+    const kind = draft.adapterName
+    const p = draft.modelProvider ?? 'deepseek'
+    setAdapterKind(kind)
+    setName(draft.name)
+    setDescription(draft.description)
+    setCapabilitiesText(draft.capabilities.join(', '))
+    setSystemPrompt(draft.systemPrompt)
+    setProvider(p)
+    setModelId(
+      draft.modelId ??
+        (kind === 'claude-code'
+          ? CLAUDE_CODE_DEFAULT_MODEL
+          : kind === 'codex'
+            ? CODEX_DEFAULT_MODEL
+            : PROVIDER_DEFAULTS[p].defaultModel),
+    )
+    setToolNames(new Set(draft.toolNames))
+    setSupportsVision(draft.supportsVision)
+    setApiKey('')
+    setApiBaseUrl('')
+    setShowApiKey(false)
+    setError(null)
+    setActiveTab('basic')
+  }
+
+  const editDraftDetails = (draft: AgentConfigDraft) => {
+    applyDraftToForm(draft)
+    setCreateStep('detail')
+  }
+
+  const createFromDraft = async (draft: AgentConfigDraft) => {
+    if (submitting) return
+    setSubmitting(true)
+    setError(null)
+    try {
+      const isSdkAgent = draft.adapterName === 'claude-code' || draft.adapterName === 'codex'
+      const body: CreateAgentBody = {
+        name: draft.name.trim(),
+        avatar: draft.avatar,
+        description: draft.description.trim(),
+        capabilities: draft.capabilities,
+        systemPrompt: draft.systemPrompt.trim(),
+        adapterName: draft.adapterName,
+        modelProvider: isSdkAgent ? undefined : draft.modelProvider,
+        modelId: draft.modelId?.trim() || undefined,
+        toolNames: isSdkAgent ? [] : draft.toolNames,
+        supportsVision: draft.supportsVision,
+      }
+      const created = await createAgent(body)
+      upsertAgent(created)
+      onOpenChange(false)
+    } catch (err) {
+      const nextError = err instanceof Error ? err : new Error(String(err))
+      setError(nextError.message)
+      throw nextError
+    } finally {
+      setSubmitting(false)
+    }
+  }
 
   const submit = async () => {
     if (submitting) return
@@ -301,18 +304,43 @@ export function CreateAgentDialog({
     }
   }
 
+  const showDetailForm = isEdit || createStep === 'detail'
+  const descriptionText = isEdit
+    ? '修改这个 Agent 的配置。保存后立即生效，已存在的会话也会用新配置回复。'
+    : createStep === 'choose'
+      ? '选择创建方式。可以先用描述生成草稿，也可以直接进入完整配置。'
+      : createStep === 'wizard'
+        ? '通过描述生成一份可确认的 Agent 配置草稿。'
+        : '为这个 Agent 设定身份与能力。它会出现在新建对话的选择列表里。'
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="grid max-h-[calc(100vh-2rem)] grid-rows-[auto_minmax(0,1fr)_auto] overflow-hidden sm:max-w-2xl">
         <DialogHeader>
           <DialogTitle>{isEdit ? '编辑 Agent' : '创建 Agent'}</DialogTitle>
-          <DialogDescription>
-            {isEdit
-              ? '修改这个 Agent 的配置。保存后立即生效，已存在的会话也会用新配置回复。'
-              : '为这个 Agent 设定身份与能力。它会出现在新建对话的选择列表里。'}
-          </DialogDescription>
+          <DialogDescription>{descriptionText}</DialogDescription>
         </DialogHeader>
 
+        {!showDetailForm ? (
+          createStep === 'choose' ? (
+            <CreateModeChoice
+              onConversational={() => setCreateStep('wizard')}
+              onDetailed={() => setCreateStep('detail')}
+              onCancel={() => onOpenChange(false)}
+            />
+          ) : (
+            <AgentCreateWizard
+              onBack={() => {
+                setError(null)
+                setCreateStep('choose')
+              }}
+              onCancel={() => onOpenChange(false)}
+              onEditDetails={editDraftDetails}
+              onCreate={createFromDraft}
+              creating={submitting}
+            />
+          )
+        ) : (
         <div className="flex min-h-0 flex-col gap-2">
           <Tabs
             value={activeTab}
@@ -385,7 +413,7 @@ export function CreateAgentDialog({
                         className="mt-0.5 accent-primary"
                       />
                       <div className="min-w-0">
-                        <div className="text-xs font-medium">Custom（OpenAI 兼容协议）</div>
+                        <div className="text-xs font-medium">Custom Agent SDK</div>
                         <div className="mt-0.5 text-[10px] text-muted-foreground">
                           用 DeepSeek / OpenAI / 火山方舟 / 自定义 OpenAI-compatible API。可自定义工具集和模型。
                         </div>
@@ -405,7 +433,7 @@ export function CreateAgentDialog({
                         className="mt-0.5 accent-primary"
                       />
                       <div className="min-w-0">
-                        <div className="text-xs font-medium">Claude Code SDK（推荐 Anthropic 用户）</div>
+                        <div className="text-xs font-medium">Claude Code SDK</div>
                         <div className="mt-0.5 text-[10px] text-muted-foreground">
                           用 @anthropic-ai/claude-agent-sdk，自带 Bash / Read / Write / Edit / Grep / Glob / WebFetch / Task 子 agent 等一整套工具。
                         </div>
@@ -425,7 +453,7 @@ export function CreateAgentDialog({
                         className="mt-0.5 accent-primary"
                       />
                       <div className="min-w-0">
-                        <div className="text-xs font-medium">Codex SDK（推荐 OpenAI 编码任务）</div>
+                        <div className="text-xs font-medium">Codex SDK</div>
                         <div className="mt-0.5 text-[10px] text-muted-foreground">
                           用 @openai/codex-sdk，支持本地仓库读写、命令执行、线程续接和结构化事件流；需要 Codex/Responses 兼容后端。
                         </div>
@@ -637,7 +665,7 @@ export function CreateAgentDialog({
                           )
                         })}
                       </div>
-                      {AVAILABLE_TOOLS.map((t) => {
+                      {AVAILABLE_AGENT_TOOLS.map((t) => {
                         const meta = TOOL_META[t]
                         return (
                           <label
@@ -703,17 +731,88 @@ export function CreateAgentDialog({
             </div>
           )}
         </div>
+        )}
 
-        <DialogFooter>
-          <Button variant="outline" onClick={() => onOpenChange(false)}>
-            取消
-          </Button>
-          <Button onClick={() => void submit()} disabled={submitting}>
-            {submitting ? (isEdit ? '保存中...' : '创建中...') : isEdit ? '保存' : '创建'}
-          </Button>
-        </DialogFooter>
+        {showDetailForm && (
+          <DialogFooter>
+            {!isEdit && (
+              <Button
+                variant="outline"
+                onClick={() => {
+                  setError(null)
+                  setCreateStep('choose')
+                }}
+              >
+                返回
+              </Button>
+            )}
+            <Button variant="outline" onClick={() => onOpenChange(false)}>
+              取消
+            </Button>
+            <Button onClick={() => void submit()} disabled={submitting}>
+              {submitting ? (isEdit ? '保存中...' : '创建中...') : isEdit ? '保存' : '创建'}
+            </Button>
+          </DialogFooter>
+        )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function CreateModeChoice({
+  onConversational,
+  onDetailed,
+  onCancel,
+}: {
+  onConversational: () => void
+  onDetailed: () => void
+  onCancel: () => void
+}) {
+  return (
+    <div className="flex min-h-0 flex-col gap-3">
+      <div className="grid gap-2">
+        <button
+          type="button"
+          onClick={onConversational}
+          className="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-3 text-left transition hover:border-primary hover:bg-primary/5"
+        >
+          <div className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-primary/10 text-primary">
+            <MessageSquareText className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="flex items-center gap-1.5 text-sm font-medium">
+              对话创建
+              <Sparkles className="size-3.5 text-primary" />
+            </div>
+            <div className="mt-1 text-xs leading-5 text-muted-foreground">
+              描述想要的角色、任务和交付物，先生成可审阅的配置草稿。
+            </div>
+          </div>
+        </button>
+
+        <button
+          type="button"
+          onClick={onDetailed}
+          className="flex cursor-pointer items-start gap-3 rounded-md border px-3 py-3 text-left transition hover:border-foreground/30"
+        >
+          <div className="mt-0.5 inline-flex size-8 shrink-0 items-center justify-center rounded-md bg-muted text-muted-foreground">
+            <SlidersHorizontal className="size-4" />
+          </div>
+          <div className="min-w-0">
+            <div className="text-sm font-medium">详细配置</div>
+            <div className="mt-1 text-xs leading-5 text-muted-foreground">
+              直接编辑名称、模型、API Key、工具权限和 System Prompt。
+            </div>
+          </div>
+        </button>
+      </div>
+
+      <div className="flex justify-end">
+        <Button variant="outline" onClick={onCancel}>
+          取消
+        </Button>
+      </div>
+    </div>
   )
 }
 
